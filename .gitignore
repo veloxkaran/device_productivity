@@ -1,0 +1,21 @@
+# ── Build artifacts ───────────────────────────────────────────────
+my-monitor
+my-monitor.exe
+dist/
+
+# ── Installer asset placeholders (generated during packaging) ─────
+cmd/installer-linux/asset.bin
+cmd/installer-windows/asset.bin
+
+# ── Data directory (SQLite DB, screenshots, config) ───────────────
+data/
+
+# ── OS noise ──────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ── Go toolchain ──────────────────────────────────────────────────
+vendor/
+
+# ── Logs ──────────────────────────────────────────────────────────
+*.log

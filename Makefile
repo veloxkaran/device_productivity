@@ -2,42 +2,41 @@
         build-mac-amd64 build-mac-arm64 \
         build-linux-amd64 build-linux-arm64 \
         build-windows-amd64 \
+        package package-macos package-macos-universal \
+        package-linux-amd64 package-linux-arm64 \
+        package-windows-amd64 \
         dist clean deps
 
-# ── Development ────────────────────────────────────────────────
+# ── Development ────────────────────────────────────────────────────
 run:
 	go run .
 
 deps:
 	go mod tidy
 
-# ── Native build (current machine) ────────────────────────────
-build-local:
+# ── Native build (current machine) ────────────────────────────────
+build-local: deps
 	go build -ldflags="-s -w" -o my-monitor .
 	@echo "Binary: ./my-monitor"
 
-# Default 'build' target = current machine
 build: build-local
 
-# ── macOS ──────────────────────────────────────────────────────
-build-mac-amd64:
+# ── Cross-compile app binaries ─────────────────────────────────────
+build-mac-amd64: deps
 	GOOS=darwin  GOARCH=amd64  go build -ldflags="-s -w" -o dist/my-monitor-darwin-amd64 .
 
-build-mac-arm64:
+build-mac-arm64: deps
 	GOOS=darwin  GOARCH=arm64  go build -ldflags="-s -w" -o dist/my-monitor-darwin-arm64 .
 
-# ── Linux ──────────────────────────────────────────────────────
-build-linux-amd64:
+build-linux-amd64: deps
 	GOOS=linux   GOARCH=amd64  go build -ldflags="-s -w" -o dist/my-monitor-linux-amd64 .
 
-build-linux-arm64:
+build-linux-arm64: deps
 	GOOS=linux   GOARCH=arm64  go build -ldflags="-s -w" -o dist/my-monitor-linux-arm64 .
 
-# ── Windows ────────────────────────────────────────────────────
-build-windows-amd64:
+build-windows-amd64: deps
 	GOOS=windows GOARCH=amd64  go build -ldflags="-s -w" -o dist/my-monitor-windows-amd64.exe .
 
-# ── All platforms ──────────────────────────────────────────────
 build-all: deps
 	@mkdir -p dist
 	$(MAKE) build-mac-amd64
@@ -45,22 +44,68 @@ build-all: deps
 	$(MAKE) build-linux-amd64
 	$(MAKE) build-linux-arm64
 	$(MAKE) build-windows-amd64
+	@echo ""; ls -lh dist/
+
+# ── macOS installer (.dmg) ─────────────────────────────────────────
+#   native arch (arm64 or amd64 depending on host machine)
+package-macos:
+	@mkdir -p dist
+	bash build-dmg.sh
+
+#   universal binary (arm64 + amd64) — requires Xcode cross-compile tools
+package-macos-universal:
+	@mkdir -p dist
+	ARCH=universal bash build-dmg.sh
+
+# ── Linux self-extracting installer ───────────────────────────────
+#   Build app binary → copy to installer/asset.bin → build installer → cleanup
+
+package-linux-amd64: build-linux-amd64
+	@echo "==> Packaging Linux amd64 installer..."
+	cp dist/my-monitor-linux-amd64 cmd/installer-linux/asset.bin
+	GOOS=linux GOARCH=amd64 go build \
+	    -tags packaging \
+	    -ldflags="-s -w" \
+	    -o dist/MyMonitor-Setup-linux-amd64 \
+	    ./cmd/installer-linux/
+	rm -f cmd/installer-linux/asset.bin
+	@echo ""; echo "  Installer: dist/MyMonitor-Setup-linux-amd64"
+	@echo "  Usage on target: chmod +x MyMonitor-Setup-linux-amd64 && ./MyMonitor-Setup-linux-amd64"
+
+package-linux-arm64: build-linux-arm64
+	@echo "==> Packaging Linux arm64 installer..."
+	cp dist/my-monitor-linux-arm64 cmd/installer-linux/asset.bin
+	GOOS=linux GOARCH=arm64 go build \
+	    -tags packaging \
+	    -ldflags="-s -w" \
+	    -o dist/MyMonitor-Setup-linux-arm64 \
+	    ./cmd/installer-linux/
+	rm -f cmd/installer-linux/asset.bin
+	@echo ""; echo "  Installer: dist/MyMonitor-Setup-linux-arm64"
+
+# ── Windows self-extracting installer (.exe) ───────────────────────
+package-windows-amd64: build-windows-amd64
+	@echo "==> Packaging Windows amd64 installer..."
+	cp dist/my-monitor-windows-amd64.exe cmd/installer-windows/asset.bin
+	GOOS=windows GOARCH=amd64 go build \
+	    -tags packaging \
+	    -ldflags="-s -w -H windowsgui" \
+	    -o dist/MyMonitor-Setup-windows-amd64.exe \
+	    ./cmd/installer-windows/
+	rm -f cmd/installer-windows/asset.bin
+	@echo ""; echo "  Installer: dist/MyMonitor-Setup-windows-amd64.exe"
+	@echo "  Usage on target: double-click MyMonitor-Setup-windows-amd64.exe"
+
+# ── Build all platform packages ────────────────────────────────────
+package: package-macos package-linux-amd64 package-linux-arm64 package-windows-amd64
 	@echo ""
-	@echo "All binaries in dist/:"
-	@ls -lh dist/
+	@echo "All installers in dist/:"
+	@ls -lh dist/MyMonitor-Setup-* 2>/dev/null || true
+	@ls -lh dist/MyMonitor-*.dmg  2>/dev/null || true
 
-# ── Release archives ───────────────────────────────────────────
-dist: build-all
-	@cd dist && \
-	  zip my-monitor-darwin-amd64.zip  my-monitor-darwin-amd64  && \
-	  zip my-monitor-darwin-arm64.zip  my-monitor-darwin-arm64  && \
-	  zip my-monitor-linux-amd64.zip   my-monitor-linux-amd64   && \
-	  zip my-monitor-linux-arm64.zip   my-monitor-linux-arm64   && \
-	  zip my-monitor-windows-amd64.zip my-monitor-windows-amd64.exe
-	@echo "Release archives in dist/"
-
-# ── Clean ──────────────────────────────────────────────────────
+# ── Clean ─────────────────────────────────────────────────────────
 clean:
-	rm -f my-monitor
+	rm -f my-monitor my-monitor.exe
 	rm -rf dist/
-	rm -rf data/
+	rm -f cmd/installer-linux/asset.bin
+	rm -f cmd/installer-windows/asset.bin

@@ -102,6 +102,15 @@ func initSchema(db *sql.DB) error {
 			table_name TEXT PRIMARY KEY,
 			last_sync  TEXT NOT NULL
 		);
+
+		CREATE TABLE IF NOT EXISTS input_logs (
+			id             INTEGER PRIMARY KEY AUTOINCREMENT,
+			recorded_at    TEXT NOT NULL,
+			key_events     INTEGER NOT NULL DEFAULT 0,
+			mouse_clicks   INTEGER NOT NULL DEFAULT 0,
+			mouse_distance REAL    NOT NULL DEFAULT 0
+		);
+		CREATE INDEX IF NOT EXISTS idx_input_time ON input_logs(recorded_at DESC);
 	`)
 	return err
 }
@@ -435,6 +444,80 @@ func (d *DB) GetTimeEntriesSince(since time.Time) ([]TimeEntry, error) {
 		list = append(list, e)
 	}
 	return list, rs.Err()
+}
+
+// ── Input log methods ─────────────────────────────────────────────
+
+// InputLog is one 1-minute bucket of aggregated keyboard/mouse activity.
+type InputLog struct {
+	ID            int64
+	RecordedAt    time.Time
+	KeyEvents     int64
+	MouseClicks   int64
+	MouseDistance float64
+}
+
+func (d *DB) SaveInputLog(recordedAt time.Time, keyEvents, mouseClicks int64, mouseDist float64) error {
+	_, err := d.db.Exec(
+		`INSERT INTO input_logs (recorded_at, key_events, mouse_clicks, mouse_distance)
+		 VALUES (?, ?, ?, ?)`,
+		recordedAt.Format(time.RFC3339), keyEvents, mouseClicks, mouseDist,
+	)
+	return err
+}
+
+func (d *DB) GetRecentInputLogs(limit int) ([]InputLog, error) {
+	rows, err := d.db.Query(
+		`SELECT id, recorded_at, key_events, mouse_clicks, mouse_distance
+		 FROM input_logs ORDER BY recorded_at DESC LIMIT ?`, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []InputLog
+	for rows.Next() {
+		var l InputLog
+		var ts string
+		if err := rows.Scan(&l.ID, &ts, &l.KeyEvents, &l.MouseClicks, &l.MouseDistance); err != nil {
+			return nil, err
+		}
+		l.RecordedAt, _ = time.Parse(time.RFC3339, ts)
+		list = append(list, l)
+	}
+	return list, rows.Err()
+}
+
+// PurgeOldData deletes rows older than retainDays from screenshots, activity_logs, and input_logs.
+func (d *DB) PurgeOldData(retainDays int) error {
+	cutoff := time.Now().AddDate(0, 0, -retainDays).Format(time.RFC3339)
+	tables := []string{"screenshots", "activity_logs", "input_logs"}
+	for _, t := range tables {
+		col := "created_at"
+		if t == "input_logs" {
+			col = "recorded_at"
+		}
+		if _, err := d.db.Exec(
+			fmt.Sprintf("DELETE FROM %s WHERE %s < ?", t, col), cutoff,
+		); err != nil {
+			return fmt.Errorf("purge %s: %w", t, err)
+		}
+	}
+	return nil
+}
+
+// DBStats returns row counts for the main tables.
+func (d *DB) DBStats() (map[string]int64, error) {
+	stats := map[string]int64{}
+	tables := []string{"screenshots", "activity_logs", "input_logs", "time_entries"}
+	for _, t := range tables {
+		var n int64
+		if err := d.db.QueryRow("SELECT COUNT(*) FROM " + t).Scan(&n); err != nil {
+			return nil, err
+		}
+		stats[t] = n
+	}
+	return stats, nil
 }
 
 func (d *DB) GetActivityLogsSince(since time.Time) ([]ActivityLog, error) {

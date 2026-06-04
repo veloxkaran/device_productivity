@@ -5,6 +5,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"log"
 	"my-monitor/auth"
@@ -98,6 +99,12 @@ func Start(db *storage.DB, addr string) {
 	mux.HandleFunc("/api/launchagent/remove", requireAuth(apiAutoStartRemoveHandler))
 	mux.HandleFunc("/api/change-password", requireAuth(apiChangePasswordHandler(db)))
 	mux.HandleFunc("/api/setup/complete", requireAuth(apiSetupCompleteHandler))
+
+	// API — live data
+	mux.HandleFunc("/api/events", requireAuth(apiEventsHandler(db)))
+	mux.HandleFunc("/api/stats", requireAuth(apiStatsHandler(db)))
+	mux.HandleFunc("/api/input/recent", requireAuth(apiInputRecentHandler(db)))
+	mux.HandleFunc("/api/db/stats", requireAuth(apiDBStatsHandler(db)))
 
 	// Time tracker page + API
 	mux.HandleFunc("/time", requireAuth(timePageHandler))
@@ -527,6 +534,121 @@ func parseLocalDate(s string, loc *time.Location) time.Time {
 	m, _ := strconv.Atoi(parts[1])
 	d, _ := strconv.Atoi(parts[2])
 	return time.Date(y, time.Month(m), d, 0, 0, 0, 0, loc)
+}
+
+// ── API: SSE live events ──────────────────────────────────────────
+
+func apiEventsHandler(db *storage.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+
+		send := func() {
+			b, _ := json.Marshal(buildLiveState(db))
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			flusher.Flush()
+		}
+
+		send()
+		tick := time.NewTicker(5 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-r.Context().Done():
+				return
+			case <-tick.C:
+				send()
+			}
+		}
+	}
+}
+
+type liveState struct {
+	Activity   map[string]interface{} `json:"activity"`
+	Input      monitor.InputRate      `json:"input"`
+	ClockedIn  bool                   `json:"clockedIn"`
+	LatestShot string                 `json:"latestShot"`
+}
+
+func buildLiveState(db *storage.DB) liveState {
+	st := monitor.CurrentStatus()
+	shots, _ := db.GetRecentScreenshots(1)
+	latest := ""
+	if len(shots) > 0 {
+		latest = "/screenshots/" + filepath.Base(shots[0].FilePath)
+	}
+	return liveState{
+		Activity: map[string]interface{}{
+			"isActive":    st.IsActive,
+			"idleSeconds": st.IdleSeconds,
+			"updatedAt":   st.UpdatedAt.Format(time.RFC3339),
+		},
+		Input:      monitor.GetInputRate(),
+		ClockedIn:  monitor.IsClockedIn(),
+		LatestShot: latest,
+	}
+}
+
+// ── API: current stats snapshot ───────────────────────────────────
+
+func apiStatsHandler(db *storage.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, buildLiveState(db))
+	}
+}
+
+// ── API: recent input logs (last N 1-min buckets) ─────────────────
+
+func apiInputRecentHandler(db *storage.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		n := 15
+		if v := r.URL.Query().Get("n"); v != "" {
+			if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 && parsed <= 60 {
+				n = parsed
+			}
+		}
+		logs, err := db.GetRecentInputLogs(n)
+		if err != nil {
+			writeJSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		type bucket struct {
+			Time          string  `json:"time"`
+			KeyEvents     int64   `json:"keyEvents"`
+			MouseClicks   int64   `json:"mouseClicks"`
+			MouseDistance float64 `json:"mouseDistance"`
+		}
+		out := make([]bucket, 0, len(logs))
+		for _, l := range logs {
+			out = append(out, bucket{
+				Time:          l.RecordedAt.Format("15:04"),
+				KeyEvents:     l.KeyEvents,
+				MouseClicks:   l.MouseClicks,
+				MouseDistance: l.MouseDistance,
+			})
+		}
+		writeJSON(w, map[string]interface{}{"buckets": out})
+	}
+}
+
+// ── API: DB row-count stats ───────────────────────────────────────
+
+func apiDBStatsHandler(db *storage.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		stats, err := db.DBStats()
+		if err != nil {
+			writeJSONError(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, stats)
+	}
 }
 
 // ── Cloud setup handler ───────────────────────────────────────────

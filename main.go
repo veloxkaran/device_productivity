@@ -35,6 +35,20 @@ func main() {
 
 	go capture.StartCapture(db, 3*time.Minute)
 	go monitor.StartActivityMonitor(db, 30*time.Second)
+	go monitor.StartInputMonitor(db, time.Second)
+
+	// Purge data older than 30 days once at startup, then daily
+	go func() {
+		purge := func() {
+			if err := db.PurgeOldData(30); err != nil {
+				log.Printf("purge: %v", err)
+			}
+		}
+		purge()
+		for range time.NewTicker(24 * time.Hour).C {
+			purge()
+		}
+	}()
 
 	// Start cloud sync if configured
 	go startCloudSync(db)

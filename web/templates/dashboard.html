@@ -3,124 +3,198 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Monitor — Dashboard</title>
+  <title>My Monitor — Dashboard</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"/>
   <style>
-    .screenshot-thumb { width: 100%; height: 140px; object-fit: cover; border-radius: 4px; cursor: pointer; }
-    .status-badge { font-size: 1rem; }
-    .activity-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
-    .dot-active { background: #198754; }
-    .dot-idle   { background: #6c757d; }
+    /* ── Base ─────────────────────────────── */
+    body { background: #f0f2f5; }
+
+    /* ── Stat cards ───────────────────────── */
+    .stat-card       { background: #fff; border-radius: .5rem; padding: 1.1rem 1.25rem; box-shadow: 0 1px 3px rgba(0,0,0,.07); height: 100%; }
+    .stat-label      { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: #6c757d; margin-bottom: .2rem; }
+    .stat-value      { font-size: 1.6rem; font-weight: 700; line-height: 1.1; }
+    .stat-sub        { font-size: .78rem; color: #6c757d; margin-top: .2rem; }
+
+    /* ── Activity pulse ───────────────────── */
+    .pulse-dot {
+      display: inline-block; width: 11px; height: 11px; border-radius: 50%;
+      margin-right: 6px; vertical-align: middle;
+    }
+    .pulse-active {
+      background: #198754;
+      box-shadow: 0 0 0 0 rgba(25,135,84,.6);
+      animation: pulse 1.6s infinite;
+    }
+    .pulse-idle { background: #adb5bd; }
+
+    @keyframes pulse {
+      0%   { box-shadow: 0 0 0 0   rgba(25,135,84,.6); }
+      70%  { box-shadow: 0 0 0 8px rgba(25,135,84,0);  }
+      100% { box-shadow: 0 0 0 0   rgba(25,135,84,0);  }
+    }
+
+    /* ── Live clock ───────────────────────── */
+    #live-clock { font-variant-numeric: tabular-nums; }
+
+    /* ── Input bars ───────────────────────── */
+    .input-bar-wrap  { background: #e9ecef; border-radius: 4px; height: 8px; overflow: hidden; }
+    .input-bar-fill  { height: 100%; border-radius: 4px; transition: width .6s ease; }
+
+    /* ── Mini chart ───────────────────────── */
+    #input-chart     { display: flex; align-items: flex-end; gap: 3px; height: 60px; }
+    .chart-col       { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px; }
+    .chart-bar       { width: 100%; border-radius: 2px 2px 0 0; transition: height .4s ease; min-height: 2px; }
+    .chart-bar.keys  { background: #0d6efd; }
+    .chart-bar.mouse { background: #20c997; }
+    .chart-tick      { font-size: .55rem; color: #adb5bd; white-space: nowrap; }
+
+    /* ── Screenshots ──────────────────────── */
+    .screenshot-thumb {
+      width: 100%; aspect-ratio: 16/9; object-fit: cover;
+      border-radius: 4px; cursor: pointer;
+      transition: opacity .15s;
+    }
+    .screenshot-thumb:hover { opacity: .85; }
+    .shot-new { animation: fadeIn .5s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: scale(1); } }
+
+    /* ── Activity table ───────────────────── */
+    .dot-active { display:inline-block;width:8px;height:8px;border-radius:50%;background:#198754;margin-right:5px; }
+    .dot-idle   { display:inline-block;width:8px;height:8px;border-radius:50%;background:#adb5bd;margin-right:5px; }
+
+    /* ── SSE badge ────────────────────────── */
+    #sse-badge { font-size: .7rem; padding: .2em .6em; vertical-align: middle; }
   </style>
-  <meta http-equiv="refresh" content="60"/>
 </head>
-<body class="bg-light">
+<body>
 
 <nav class="navbar navbar-dark bg-dark px-4">
   <div class="d-flex align-items-center gap-3">
     <span class="navbar-brand fw-semibold mb-0">My Monitor</span>
-    <a href="/time" class="text-white-50 text-decoration-none small">Time Tracker</a>
+    <a href="/time"  class="text-white-50 text-decoration-none small">Time Tracker</a>
+    <a href="/cloud" class="text-white-50 text-decoration-none small">Cloud</a>
     <a href="/setup" class="text-white-50 text-decoration-none small">Setup</a>
   </div>
-  <a href="/logout" class="btn btn-sm btn-outline-light">Logout</a>
+  <div class="d-flex align-items-center gap-2">
+    <span id="sse-badge" class="badge bg-secondary">connecting…</span>
+    <a href="/logout" class="btn btn-sm btn-outline-light">Logout</a>
+  </div>
 </nav>
 
-<div class="container-fluid py-4">
+<div class="container-fluid py-4 px-4">
 
   {{if not .SetupComplete}}
-  <div class="alert alert-warning d-flex align-items-center justify-content-between mb-4 py-2">
+  <div class="alert alert-warning d-flex align-items-center justify-content-between mb-3 py-2">
     <span><strong>Setup not complete.</strong> Change your default password and grant Screen Recording permission.</span>
     <a href="/setup" class="btn btn-sm btn-warning">Open Setup →</a>
   </div>
   {{end}}
 
-  {{if .ClockedIn}}
-  <div class="alert alert-success d-flex align-items-center justify-content-between mb-4 py-2">
-    <span>● <strong>Clocked in</strong> — screen recording is active. <a href="/time" class="alert-link">View Time Tracker</a></span>
-    <form method="POST" action="/api/time/clockout" class="mb-0">
-      <button class="btn btn-sm btn-outline-success">Clock Out</button>
-    </form>
+  <!-- Clock-in banner (updated dynamically) -->
+  <div id="clockin-banner" class="alert mb-3 py-2 d-flex align-items-center justify-content-between"
+       style="display:none!important">
+    <span id="clockin-msg"></span>
+    <a href="/time" class="btn btn-sm" id="clockin-btn">Time Tracker</a>
   </div>
-  {{else}}
-  <div class="alert alert-secondary d-flex align-items-center justify-content-between mb-4 py-2">
-    <span>Screen recording is <strong>paused</strong> — clock in to start capturing.</span>
-    <a href="/time" class="btn btn-sm btn-success">Clock In →</a>
-  </div>
-  {{end}}
 
-  <!-- Status row -->
+  <!-- ══ Stat cards ══════════════════════════════════════════════ -->
   <div class="row g-3 mb-4">
-    <div class="col-md-4">
-      <div class="card shadow-sm h-100">
-        <div class="card-body">
-          <h6 class="card-subtitle text-muted mb-2">Current Status</h6>
-          {{if .Status.IsActive}}
-          <span class="badge bg-success status-badge">Active</span>
-          {{else}}
-          <span class="badge bg-secondary status-badge">Idle</span>
-          {{end}}
-          <p class="mt-2 mb-0 text-muted small">
-            Idle for {{.Status.IdleSeconds}}s &nbsp;·&nbsp;
-            Updated {{.Status.UpdatedAt.Format "15:04:05"}}
-          </p>
+
+    <!-- Status -->
+    <div class="col-6 col-md-3">
+      <div class="stat-card">
+        <div class="stat-label">Status</div>
+        <div class="stat-value" id="stat-status">
+          <span class="pulse-dot pulse-idle" id="status-dot"></span>
+          <span id="status-text">—</span>
+        </div>
+        <div class="stat-sub" id="stat-idle">Idle — s</div>
+      </div>
+    </div>
+
+    <!-- Live clock -->
+    <div class="col-6 col-md-3">
+      <div class="stat-card">
+        <div class="stat-label">Live Clock</div>
+        <div class="stat-value" id="live-clock">00:00:00</div>
+        <div class="stat-sub" id="clock-sub">UTC</div>
+      </div>
+    </div>
+
+    <!-- Keys/min -->
+    <div class="col-6 col-md-3">
+      <div class="stat-card">
+        <div class="stat-label">Keys / min</div>
+        <div class="stat-value" id="stat-keys">—</div>
+        <div class="stat-sub mb-2">estimated keystrokes</div>
+        <div class="input-bar-wrap">
+          <div class="input-bar-fill bg-primary" id="bar-keys" style="width:0%"></div>
         </div>
       </div>
     </div>
-    <div class="col-md-4">
-      <div class="card shadow-sm h-100">
-        <div class="card-body">
-          <h6 class="card-subtitle text-muted mb-2">Screenshots</h6>
-          <p class="fs-4 fw-bold mb-0">{{len .Screenshots}}</p>
-          <p class="text-muted small mb-0">last 20 captured</p>
+
+    <!-- Clicks + mouse -->
+    <div class="col-6 col-md-3">
+      <div class="stat-card">
+        <div class="stat-label">Clicks / min &nbsp;·&nbsp; Mouse px</div>
+        <div class="stat-value" id="stat-clicks">—</div>
+        <div class="stat-sub" id="stat-mouse">— px traveled</div>
+        <div class="input-bar-wrap mt-2">
+          <div class="input-bar-fill bg-success" id="bar-mouse" style="width:0%"></div>
         </div>
       </div>
     </div>
-    <div class="col-md-4">
-      <div class="card shadow-sm h-100">
-        <div class="card-body">
-          <h6 class="card-subtitle text-muted mb-2">Activity Records</h6>
-          <p class="fs-4 fw-bold mb-0">{{len .Activity}}</p>
-          <p class="text-muted small mb-0">last 50 entries</p>
-        </div>
-      </div>
+
+  </div>
+
+  <!-- ══ Input activity chart ═══════════════════════════════════ -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center fw-semibold py-2">
+      <span>Input Activity — last 15 min</span>
+      <span class="text-muted small fw-normal">
+        <span class="badge bg-primary me-1" style="width:10px;height:10px;padding:0;vertical-align:middle;border-radius:2px;display:inline-block"></span> Keys &nbsp;
+        <span class="badge bg-success" style="width:10px;height:10px;padding:0;vertical-align:middle;border-radius:2px;display:inline-block"></span> Clicks
+      </span>
+    </div>
+    <div class="card-body py-3">
+      <div id="input-chart"></div>
     </div>
   </div>
 
-  <!-- Screenshots grid -->
+  <!-- ══ Screenshots grid ════════════════════════════════════════ -->
   <div class="card shadow-sm mb-4">
-    <div class="card-header fw-semibold">Recent Screenshots</div>
+    <div class="card-header fw-semibold py-2 d-flex justify-content-between align-items-center">
+      <span>Recent Screenshots</span>
+      <span class="text-muted small fw-normal" id="shot-count">0 captured</span>
+    </div>
     <div class="card-body">
-      {{if .Screenshots}}
-      <div class="row g-3">
-        {{range .Screenshots}}
-        <div class="col-6 col-md-3 col-lg-2">
-          <a href="{{.URL}}" target="_blank">
-            <img src="{{.URL}}" class="screenshot-thumb" alt="screenshot"
-                 title="{{.CreatedAt.Format "2006-01-02 15:04:05"}}"/>
-          </a>
-          <p class="text-muted small mt-1 mb-0 text-center">{{.CreatedAt.Format "15:04"}}</p>
-        </div>
+      <div class="row g-2" id="screenshots-grid">
+        {{if .Screenshots}}
+          {{range .Screenshots}}
+          <div class="col-6 col-md-3 col-lg-2">
+            <a href="{{.URL}}" target="_blank">
+              <img src="{{.URL}}" class="screenshot-thumb" alt="screenshot"
+                   title="{{.CreatedAt.Format "2006-01-02 15:04:05"}}"/>
+            </a>
+            <p class="text-muted small mt-1 mb-0 text-center">{{.CreatedAt.Format "15:04"}}</p>
+          </div>
+          {{end}}
+        {{else}}
+          <p class="text-muted mb-0" id="no-shots-msg">No screenshots yet — first one captured within 3 minutes of clocking in.</p>
         {{end}}
       </div>
-      {{else}}
-      <p class="text-muted mb-0">No screenshots yet — first one captured in up to 3 minutes.</p>
-      {{end}}
     </div>
   </div>
 
-  <!-- Activity log -->
+  <!-- ══ Activity log ═══════════════════════════════════════════ -->
   <div class="card shadow-sm">
-    <div class="card-header fw-semibold">Activity Log</div>
+    <div class="card-header fw-semibold py-2">Activity Log</div>
     <div class="card-body p-0">
       {{if .Activity}}
       <div class="table-responsive">
-        <table class="table table-sm table-hover mb-0">
+        <table class="table table-sm table-hover mb-0" id="activity-table">
           <thead class="table-light">
-            <tr>
-              <th>Time</th>
-              <th>Status</th>
-              <th>Idle (s)</th>
-            </tr>
+            <tr><th>Time</th><th>Status</th><th>Idle (s)</th></tr>
           </thead>
           <tbody>
             {{range .Activity}}
@@ -128,9 +202,9 @@
               <td class="text-muted small">{{.CreatedAt.Format "2006-01-02 15:04:05"}}</td>
               <td>
                 {{if .IsActive}}
-                <span class="activity-dot dot-active"></span> Active
+                <span class="dot-active"></span>Active
                 {{else}}
-                <span class="activity-dot dot-idle"></span> Idle
+                <span class="dot-idle"></span>Idle
                 {{end}}
               </td>
               <td>{{.IdleSeconds}}</td>
@@ -146,5 +220,168 @@
   </div>
 
 </div>
+
+<script>
+// ── Live clock ─────────────────────────────────────────────────────
+(function liveClock() {
+  function tick() {
+    const now = new Date();
+    document.getElementById('live-clock').textContent =
+      now.toTimeString().slice(0, 8);
+    document.getElementById('clock-sub').textContent =
+      Intl.DateTimeFormat().resolvedOptions().timeZone;
+  }
+  tick();
+  setInterval(tick, 1000);
+})();
+
+// ── SSE live data ──────────────────────────────────────────────────
+let lastShot   = '';
+let maxKeys    = 1;
+let maxClicks  = 1;
+let maxPixels  = 1;
+
+function connectSSE() {
+  const badge = document.getElementById('sse-badge');
+  const src   = new EventSource('/api/events');
+
+  src.onopen = () => {
+    badge.textContent = '● live';
+    badge.className   = 'badge bg-success';
+  };
+
+  src.onerror = () => {
+    badge.textContent = '⚠ reconnecting';
+    badge.className   = 'badge bg-warning text-dark';
+  };
+
+  src.onmessage = e => {
+    try { applyState(JSON.parse(e.data)); }
+    catch (_) {}
+  };
+}
+
+function applyState(s) {
+  // ── Clock-in banner ────────────────────────────────────────────
+  const banner = document.getElementById('clockin-banner');
+  const msg    = document.getElementById('clockin-msg');
+  const btn    = document.getElementById('clockin-btn');
+  if (s.clockedIn) {
+    banner.className = 'alert alert-success mb-3 py-2 d-flex align-items-center justify-content-between';
+    msg.innerHTML    = '● <strong>Clocked in</strong> — screen recording is active.';
+    btn.className    = 'btn btn-sm btn-outline-success';
+    btn.textContent  = 'View Time Tracker';
+  } else {
+    banner.className = 'alert alert-secondary mb-3 py-2 d-flex align-items-center justify-content-between';
+    msg.textContent  = 'Screen recording is paused — clock in to start capturing.';
+    btn.className    = 'btn btn-sm btn-success';
+    btn.textContent  = 'Clock In →';
+  }
+  banner.style.display = '';
+
+  // ── Status card ────────────────────────────────────────────────
+  const dot  = document.getElementById('status-dot');
+  const txt  = document.getElementById('status-text');
+  const idle = document.getElementById('stat-idle');
+  if (s.activity) {
+    const active = s.activity.isActive;
+    dot.className = 'pulse-dot ' + (active ? 'pulse-active' : 'pulse-idle');
+    txt.textContent = active ? 'Active' : 'Idle';
+    idle.textContent = `Idle ${s.activity.idleSeconds}s`;
+  }
+
+  // ── Input stats ────────────────────────────────────────────────
+  if (s.input) {
+    const k  = s.input.keysPerMin   || 0;
+    const c  = s.input.clicksPerMin || 0;
+    const px = Math.round(s.input.mousePixels || 0);
+
+    maxKeys   = Math.max(maxKeys,  k,  60);
+    maxPixels = Math.max(maxPixels, px, 1000);
+    maxClicks = Math.max(maxClicks, c,  20);
+
+    document.getElementById('stat-keys').textContent   = k;
+    document.getElementById('stat-clicks').textContent = c;
+    document.getElementById('stat-mouse').textContent  = `${px.toLocaleString()} px traveled`;
+
+    document.getElementById('bar-keys').style.width  = Math.min(100, k   / maxKeys   * 100) + '%';
+    document.getElementById('bar-mouse').style.width = Math.min(100, px  / maxPixels * 100) + '%';
+  }
+
+  // ── New screenshot ─────────────────────────────────────────────
+  if (s.latestShot && s.latestShot !== lastShot) {
+    lastShot = s.latestShot;
+    prependScreenshot(s.latestShot);
+  }
+}
+
+function prependScreenshot(url) {
+  const grid = document.getElementById('screenshots-grid');
+  const noMsg = document.getElementById('no-shots-msg');
+  if (noMsg) noMsg.remove();
+
+  const col = document.createElement('div');
+  col.className = 'col-6 col-md-3 col-lg-2 shot-new';
+  const now = new Date();
+  col.innerHTML = `
+    <a href="${url}" target="_blank">
+      <img src="${url}?t=${Date.now()}" class="screenshot-thumb" alt="screenshot"/>
+    </a>
+    <p class="text-muted small mt-1 mb-0 text-center">${now.toTimeString().slice(0,5)}</p>`;
+  grid.prepend(col);
+
+  // Trim to 20
+  const cols = grid.querySelectorAll('.col-6');
+  if (cols.length > 20) cols[cols.length - 1].remove();
+
+  const cnt = grid.querySelectorAll('.col-6').length;
+  document.getElementById('shot-count').textContent = `${cnt} captured`;
+}
+
+// ── Input chart ────────────────────────────────────────────────────
+async function loadInputChart() {
+  try {
+    const res  = await fetch('/api/input/recent?n=15');
+    const data = await res.json();
+    renderChart(data.buckets || []);
+  } catch (_) {}
+}
+
+function renderChart(buckets) {
+  const chart = document.getElementById('input-chart');
+  chart.innerHTML = '';
+
+  if (!buckets.length) {
+    chart.innerHTML = '<p class="text-muted small m-auto">No input data yet.</p>';
+    return;
+  }
+
+  // Reversed so oldest is left
+  const rows = [...buckets].reverse();
+  const maxK = Math.max(...rows.map(b => b.keyEvents),   1);
+  const maxC = Math.max(...rows.map(b => b.mouseClicks), 1);
+
+  rows.forEach(b => {
+    const col = document.createElement('div');
+    col.className = 'chart-col';
+
+    const kh = Math.round((b.keyEvents   / maxK) * 52);
+    const ch = Math.round((b.mouseClicks / maxC) * 52);
+
+    col.innerHTML = `
+      <div class="d-flex align-items-end gap-1 w-100" style="height:56px">
+        <div class="chart-bar keys"  style="height:${kh}px;flex:1" title="Keys: ${b.keyEvents}"></div>
+        <div class="chart-bar mouse" style="height:${ch}px;flex:1" title="Clicks: ${b.mouseClicks}"></div>
+      </div>
+      <div class="chart-tick">${b.time}</div>`;
+    chart.appendChild(col);
+  });
+}
+
+// ── Init ───────────────────────────────────────────────────────────
+connectSSE();
+loadInputChart();
+setInterval(loadInputChart, 60_000); // refresh chart every minute
+</script>
 </body>
 </html>

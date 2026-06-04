@@ -1,42 +1,116 @@
 #!/bin/bash
-set -e
+# My Monitor — macOS .dmg packager
+# Produces a drag-to-install .dmg with a proper .app bundle.
+# Builds for the native machine architecture (arm64 on Apple Silicon, amd64 on Intel).
+# Pass ARCH=universal to attempt a universal binary (requires Xcode + arm64+amd64 CGo cross-compile).
+#
+# Usage:
+#   ./build-dmg.sh             # native arch
+#   ARCH=universal ./build-dmg.sh  # universal (Intel + Apple Silicon)
 
+set -euo pipefail
+
+# ── Config ────────────────────────────────────────────────────────
 APP_NAME="MyMonitor"
+DISPLAY_NAME="My Monitor"
 BINARY_NAME="my-monitor"
 VERSION="1.0.0"
 BUNDLE_ID="com.mymonitor.app"
-DMG_NAME="${APP_NAME}-${VERSION}.dmg"
-BUILD_DIR="./dist"
-APP_BUNDLE="${BUILD_DIR}/${APP_NAME}.app"
+PORT=8080
 
-echo "==> Cleaning build dir"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_DIR="${SCRIPT_DIR}/dist"
+APP_BUNDLE="${BUILD_DIR}/${APP_NAME}.app"
+DMG_NAME="${APP_NAME}-${VERSION}.dmg"
+
+# ── Detect arch ───────────────────────────────────────────────────
+HOST_ARCH=$(uname -m)   # arm64 or x86_64
+WANT_ARCH="${ARCH:-native}"
+
+if [[ "$WANT_ARCH" == "native" ]]; then
+    GOARCH="$([[ "$HOST_ARCH" == "arm64" ]] && echo arm64 || echo amd64)"
+    BUILD_MODE="native ($GOARCH)"
+else
+    BUILD_MODE="universal"
+fi
+
+# ── Helpers ───────────────────────────────────────────────────────
+step()  { echo -e "\n\033[1;36m▶  $1\033[0m"; }
+ok()    { echo -e "   \033[0;32m✓\033[0m  $1"; }
+warn()  { echo -e "   \033[1;33m⚠\033[0m  $1"; }
+info()  { echo -e "   \033[2mℹ  $1\033[0m"; }
+
+# ── Build binary ─────────────────────────────────────────────────
+step "Building Go binary — $BUILD_MODE"
+
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
-echo "==> Building universal binary (arm64 + amd64)"
-GOOS=darwin GOARCH=arm64 go build -o "${BUILD_DIR}/${BINARY_NAME}-arm64" .
-GOOS=darwin GOARCH=amd64 go build -o "${BUILD_DIR}/${BINARY_NAME}-amd64" .
-lipo -create -output "${BUILD_DIR}/${BINARY_NAME}" \
-    "${BUILD_DIR}/${BINARY_NAME}-arm64" \
-    "${BUILD_DIR}/${BINARY_NAME}-amd64"
-rm "${BUILD_DIR}/${BINARY_NAME}-arm64" "${BUILD_DIR}/${BINARY_NAME}-amd64"
+cd "$SCRIPT_DIR"
+go mod tidy
 
-echo "==> Creating .app bundle"
+if [[ "$BUILD_MODE" == "universal" ]]; then
+    # Universal binary requires CGo cross-compile for the non-native arch.
+    # clang on Apple Silicon can target x86_64 with -arch flag.
+    info "Building arm64..."
+    GOARCH=arm64 GOOS=darwin go build -ldflags="-s -w" -o "${BUILD_DIR}/${BINARY_NAME}-arm64" .
+
+    info "Building amd64 (CGo cross-compile via clang -arch x86_64)..."
+    CGO_ENABLED=1 \
+    CGO_CFLAGS="-arch x86_64" \
+    CGO_LDFLAGS="-arch x86_64" \
+    CC="clang -arch x86_64" \
+    GOARCH=amd64 GOOS=darwin \
+    go build -ldflags="-s -w" -o "${BUILD_DIR}/${BINARY_NAME}-amd64" .
+
+    lipo -create -output "${BUILD_DIR}/${BINARY_NAME}" \
+        "${BUILD_DIR}/${BINARY_NAME}-arm64" \
+        "${BUILD_DIR}/${BINARY_NAME}-amd64"
+    rm "${BUILD_DIR}/${BINARY_NAME}-arm64" "${BUILD_DIR}/${BINARY_NAME}-amd64"
+    ok "Universal binary: ${BUILD_DIR}/${BINARY_NAME}"
+else
+    GOARCH="$GOARCH" GOOS=darwin go build -ldflags="-s -w" -o "${BUILD_DIR}/${BINARY_NAME}" .
+    ok "Binary (${GOARCH}): ${BUILD_DIR}/${BINARY_NAME}"
+fi
+
+# ── Build .app bundle ─────────────────────────────────────────────
+step "Creating .app bundle"
+
 mkdir -p "${APP_BUNDLE}/Contents/MacOS"
 mkdir -p "${APP_BUNDLE}/Contents/Resources"
 
-# Copy binary into bundle
-cp "${BUILD_DIR}/${BINARY_NAME}" "${APP_BUNDLE}/Contents/MacOS/${BINARY_NAME}"
-chmod +x "${APP_BUNDLE}/Contents/MacOS/${BINARY_NAME}"
+# Main binary
+cp "${BUILD_DIR}/${BINARY_NAME}" "${APP_BUNDLE}/Contents/Resources/${BINARY_NAME}"
+chmod +x "${APP_BUNDLE}/Contents/Resources/${BINARY_NAME}"
 
-# Launcher script: starts the server, waits for it, then opens browser
+# Launcher script — runs binary with data dir in ~/Library/Application Support
 cat > "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}" << 'LAUNCHER'
 #!/bin/bash
 DIR="$(cd "$(dirname "$0")" && pwd)"
 DATA_DIR="$HOME/Library/Application Support/MyMonitor"
-mkdir -p "$DATA_DIR"
+mkdir -p "$DATA_DIR/data/screenshots"
 cd "$DATA_DIR"
-exec "$DIR/my-monitor"
+
+# Launch the Go server in background
+"$DIR/../Resources/my-monitor" &
+SERVER_PID=$!
+
+# Wait up to 4s for the server to be ready
+for i in $(seq 1 40); do
+    sleep 0.1
+    if (echo >/dev/tcp/127.0.0.1/8080) 2>/dev/null; then
+        break
+    fi
+done
+
+# Open the setup page (first run) or dashboard
+if [[ ! -f "$DATA_DIR/data/.setup_complete" ]]; then
+    open "http://localhost:8080/setup"
+else
+    open "http://localhost:8080"
+fi
+
+wait "$SERVER_PID"
 LAUNCHER
 chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 
@@ -47,65 +121,80 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" << PLIST
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleExecutable</key>
-    <string>${APP_NAME}</string>
-    <key>CFBundleIdentifier</key>
-    <string>${BUNDLE_ID}</string>
-    <key>CFBundleName</key>
-    <string>${APP_NAME}</string>
-    <key>CFBundleDisplayName</key>
-    <string>My Monitor</string>
-    <key>CFBundleVersion</key>
-    <string>${VERSION}</string>
-    <key>CFBundleShortVersionString</key>
-    <string>${VERSION}</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleSignature</key>
-    <string>????</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>11.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSHighResolutionCapable</key>
-    <true/>
+    <key>CFBundleExecutable</key>      <string>${APP_NAME}</string>
+    <key>CFBundleIdentifier</key>      <string>${BUNDLE_ID}</string>
+    <key>CFBundleName</key>            <string>${DISPLAY_NAME}</string>
+    <key>CFBundleDisplayName</key>     <string>${DISPLAY_NAME}</string>
+    <key>CFBundleVersion</key>         <string>${VERSION}</string>
+    <key>CFBundleShortVersionString</key><string>${VERSION}</string>
+    <key>CFBundlePackageType</key>     <string>APPL</string>
+    <key>CFBundleSignature</key>       <string>????</string>
+    <key>LSMinimumSystemVersion</key>  <string>11.0</string>
+    <key>LSUIElement</key>             <true/>
+    <key>NSHighResolutionCapable</key> <true/>
 </dict>
 </plist>
 PLIST
 
-echo "==> Creating DMG with hdiutil"
-DMG_STAGING="${BUILD_DIR}/dmg-staging"
-mkdir -p "$DMG_STAGING"
-cp -r "${APP_BUNDLE}" "$DMG_STAGING/"
+ok ".app bundle: ${APP_BUNDLE}"
 
-# Create a symlink to /Applications for drag-and-drop install
+# ── Create DMG ────────────────────────────────────────────────────
+step "Creating .dmg"
+
+DMG_STAGING="${BUILD_DIR}/.dmg-staging"
+TEMP_DMG="${BUILD_DIR}/temp.dmg"
+FINAL_DMG="${BUILD_DIR}/${DMG_NAME}"
+
+rm -rf "$DMG_STAGING"
+mkdir -p "$DMG_STAGING"
+
+cp -r "${APP_BUNDLE}" "${DMG_STAGING}/"
+
+# Symlink to /Applications so users get the drag-to-install UI
 ln -s /Applications "${DMG_STAGING}/Applications"
 
-TEMP_DMG="${BUILD_DIR}/temp.dmg"
-hdiutil create \
-    -volname "${APP_NAME}" \
-    -srcfolder "$DMG_STAGING" \
-    -ov \
-    -format UDRW \
-    "$TEMP_DMG"
+# Add a README
+cat > "${DMG_STAGING}/README.txt" << README
+My Monitor v${VERSION}
+──────────────────────
+1. Drag MyMonitor.app to the Applications folder.
+2. Double-click MyMonitor in Applications to start.
+3. Your browser will open http://localhost:${PORT} automatically.
+4. Default login: admin / admin
+   ⚠ Change your password in the Setup wizard!
 
-# Convert to compressed read-only DMG
-hdiutil convert "$TEMP_DMG" \
+To uninstall: delete MyMonitor.app from Applications.
+Data is stored in ~/Library/Application Support/MyMonitor/
+README
+
+# Build a writable DMG first, then convert to compressed read-only
+hdiutil create \
+    -volname "${DISPLAY_NAME} ${VERSION}" \
+    -srcfolder "${DMG_STAGING}" \
+    -ov -format UDRW \
+    "${TEMP_DMG}" >/dev/null
+
+hdiutil convert "${TEMP_DMG}" \
     -format UDZO \
     -imagekey zlib-level=9 \
-    -o "${BUILD_DIR}/${DMG_NAME}"
+    -o "${FINAL_DMG}" >/dev/null
 
-rm -f "$TEMP_DMG"
-rm -rf "$DMG_STAGING"
+rm -f "${TEMP_DMG}"
+rm -rf "${DMG_STAGING}"
 
+ok "DMG: ${FINAL_DMG}"
+
+# ── Done ──────────────────────────────────────────────────────────
 echo ""
-echo "  ┌──────────────────────────────────────────────────────┐"
-echo "  │  Build complete!                                     │"
-echo "  │  DMG: dist/${DMG_NAME}          │"
-echo "  │                                                      │"
-echo "  │  Install: open the DMG and drag MyMonitor.app        │"
-echo "  │           to your Applications folder.              │"
-echo "  │  Launch: open MyMonitor.app — then visit            │"
-echo "  │          http://localhost:8080 in your browser       │"
-echo "  └──────────────────────────────────────────────────────┘"
+echo "  ┌────────────────────────────────────────────────────────┐"
+echo "  │  Build complete!                                        │"
+echo "  │                                                         │"
+printf  "  │  %-55s│\n" "DMG: dist/${DMG_NAME}"
+echo "  │                                                         │"
+echo "  │  How to install:                                        │"
+echo "  │    1. Open the .dmg                                     │"
+echo "  │    2. Drag MyMonitor.app → Applications                 │"
+echo "  │    3. Double-click MyMonitor.app to start               │"
+printf  "  │    4. Visit http://localhost:%-28s│\n" "${PORT}"
+echo "  └────────────────────────────────────────────────────────┘"
 echo ""

@@ -1,13 +1,8 @@
 package monitor
 
-import (
-	"syscall"
-	"unsafe"
-)
+import "unsafe"
 
 var (
-	modUser32Win     = syscall.NewLazyDLL("user32.dll")
-	modKernel32Win   = syscall.NewLazyDLL("kernel32.dll")
 	procLastInput    = modUser32Win.NewProc("GetLastInputInfo")
 	procGetTickCount = modKernel32Win.NewProc("GetTickCount")
 )
