@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Monitor — Cloud Setup</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"/>
+</head>
+<body class="bg-light">
+
+<nav class="navbar navbar-dark bg-dark px-4">
+  <div class="d-flex align-items-center gap-3">
+    <a href="/" class="navbar-brand fw-semibold mb-0 text-white text-decoration-none">My Monitor</a>
+    <a href="/time" class="text-white-50 text-decoration-none small">Time Tracker</a>
+    <a href="/setup" class="text-white-50 text-decoration-none small">Setup</a>
+    <a href="/cloud" class="text-white text-decoration-none small">Cloud</a>
+  </div>
+  <a href="/logout" class="btn btn-sm btn-outline-light">Logout</a>
+</nav>
+
+<div class="container py-4" style="max-width:600px">
+  <h5 class="fw-semibold mb-1">Cloud Sync</h5>
+  <p class="text-muted small mb-4">Connect to a Cloud Monitor server to sync your screenshots and attendance data.</p>
+
+  {{if .Success}}
+  <div class="alert alert-success py-2">{{.Success}}</div>
+  {{end}}
+  {{if .Error}}
+  <div class="alert alert-danger py-2">{{.Error}}</div>
+  {{end}}
+
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <form method="POST" action="/cloud">
+
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Cloud URL</label>
+          <input type="url" name="url" class="form-control"
+                 placeholder="http://your-cloud-server:9090"
+                 value="{{.Config.URL}}" required/>
+          <div class="form-text">The address of your Cloud Monitor server.</div>
+        </div>
+
+        <div class="mb-4">
+          <label class="form-label fw-semibold">Sync Token</label>
+          <input type="text" name="sync_token" class="form-control font-monospace"
+                 placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                 value="{{.Config.SyncToken}}" required/>
+          <div class="form-text">
+            Received when you accepted your team invite. Keep this private.
+          </div>
+        </div>
+
+        <div class="d-flex gap-2">
+          <button type="submit" name="action" value="save" class="btn btn-primary">Save &amp; Connect</button>
+          {{if .Config.URL}}
+          <button type="submit" name="action" value="disconnect" class="btn btn-outline-danger">Disconnect</button>
+          {{end}}
+        </div>
+      </form>
+    </div>
+  </div>
+
+  {{if .Config.URL}}
+  <div class="card shadow-sm mt-4">
+    <div class="card-body">
+      <h6 class="fw-semibold mb-3">Sync status</h6>
+      <table class="table table-sm mb-0">
+        <tbody>
+          <tr><td class="text-muted">Server</td><td>{{.Config.URL}}</td></tr>
+          <tr><td class="text-muted">Status</td>
+              <td>
+                {{if .Connected}}
+                <span class="badge bg-success">Connected</span>
+                {{else}}
+                <span class="badge bg-danger">Unreachable</span>
+                {{end}}
+              </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {{end}}
+
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

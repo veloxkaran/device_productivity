@@ -1,0 +1,6 @@
+#!/bin/bash
+DIR="$(cd "$(dirname "$0")" && pwd)"
+DATA_DIR="$HOME/Library/Application Support/MyMonitor"
+mkdir -p "$DATA_DIR"
+cd "$DATA_DIR"
+exec "$DIR/my-monitor"

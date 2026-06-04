@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>My Monitor — Setup</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"/>
+  <style>
+    :root {
+      --accent: #0d6efd;
+      --success: #198754;
+      --warn: #ffc107;
+      --muted: #6c757d;
+    }
+    body { background: #f0f2f5; }
+
+    /* ── Stepper ─────────────────────────────────── */
+    .stepper {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+      padding: 0 1rem;
+    }
+    .step-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex: 1;
+      position: relative;
+    }
+    .step-item:not(:last-child)::after {
+      content: '';
+      position: absolute;
+      top: 16px;
+      left: 50%;
+      width: 100%;
+      height: 2px;
+      background: #dee2e6;
+      z-index: 0;
+    }
+    .step-item.done:not(:last-child)::after { background: var(--success); }
+    .step-item.active:not(:last-child)::after { background: var(--accent); }
+
+    .step-circle {
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      border: 2px solid #dee2e6;
+      background: #fff;
+      display: flex; align-items: center; justify-content: center;
+      font-size: .8rem; font-weight: 700;
+      position: relative; z-index: 1;
+      transition: all .2s;
+    }
+    .step-item.done .step-circle {
+      background: var(--success); border-color: var(--success); color: #fff;
+    }
+    .step-item.active .step-circle {
+      background: var(--accent); border-color: var(--accent); color: #fff;
+    }
+    .step-label {
+      font-size: .7rem; color: var(--muted); margin-top: .35rem;
+      white-space: nowrap;
+    }
+    .step-item.active .step-label { color: var(--accent); font-weight: 600; }
+    .step-item.done .step-label  { color: var(--success); }
+
+    /* ── Card & panels ───────────────────────────── */
+    .setup-card { max-width: 720px; margin: 2.5rem auto; }
+    .step-panel  { display: none; }
+    .step-panel.active { display: block; }
+
+    /* ── Permission item ─────────────────────────── */
+    .perm-card {
+      border: 1px solid #dee2e6;
+      border-radius: .5rem;
+      padding: 1rem 1.25rem;
+      margin-bottom: 1rem;
+      background: #fff;
+    }
+    .perm-card .badge-status {
+      font-size: .75rem; padding: .3em .65em;
+    }
+
+    /* ── Feature bullets ─────────────────────────── */
+    .feature-list li { padding: .35rem 0; }
+    .feature-list .ico { width: 28px; text-align: center; }
+
+    /* ── Screenshot preview ──────────────────────── */
+    #previewImg {
+      width: 100%; border-radius: .5rem;
+      border: 1px solid #dee2e6; display: none;
+    }
+
+    /* ── Done illustration ───────────────────────── */
+    .done-check {
+      width: 72px; height: 72px;
+      background: #d1e7dd; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 2rem; margin: 0 auto 1.25rem;
+    }
+
+    .nav-pill-step { cursor: pointer; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark bg-dark px-4">
+  <span class="navbar-brand fw-semibold">My Monitor</span>
+  <div class="d-flex gap-3 align-items-center">
+    <a href="#" class="text-white-50 text-decoration-none small" onclick="skipSetup()">Skip to Dashboard →</a>
+    <a href="/logout" class="btn btn-sm btn-outline-light">Logout</a>
+  </div>
+</nav>
+
+<div class="container setup-card">
+
+  <!-- Header -->
+  <div class="text-center mb-4 pt-2">
+    <h4 class="fw-bold mb-1">Setup Wizard</h4>
+    <p class="text-muted small mb-0">Configure My Monitor in a few quick steps</p>
+  </div>
+
+  <!-- Stepper -->
+  <div class="stepper mb-4" id="stepper">
+    <div class="step-item active" data-step="1">
+      <div class="step-circle">1</div>
+      <div class="step-label">Welcome</div>
+    </div>
+    <div class="step-item" data-step="2">
+      <div class="step-circle">2</div>
+      <div class="step-label">Permissions</div>
+    </div>
+    <div class="step-item" data-step="3">
+      <div class="step-circle">3</div>
+      <div class="step-label">Auto-start</div>
+    </div>
+    <div class="step-item" data-step="4">
+      <div class="step-circle">4</div>
+      <div class="step-label">Security</div>
+    </div>
+    <div class="step-item" data-step="5">
+      <div class="step-circle">5</div>
+      <div class="step-label">Done</div>
+    </div>
+  </div>
+
+  <!-- ═══════════ STEP 1 — Welcome ═══════════ -->
+  <div class="card shadow-sm step-panel active" id="panel-1">
+    <div class="card-body p-4">
+      <h5 class="fw-bold mb-1">Welcome to My Monitor</h5>
+      <p class="text-muted small mb-4">Here's exactly what this app does and what data it collects.</p>
+
+      <ul class="list-unstyled feature-list">
+        <li class="d-flex align-items-start gap-2">
+          <span class="ico text-primary fs-5">📸</span>
+          <div>
+            <strong>Screenshot capture</strong>
+            <div class="text-muted small">Takes a screenshot every 3 minutes and saves it locally. All data stays on <em>your</em> machine — nothing is sent to external servers.</div>
+          </div>
+        </li>
+        <li class="d-flex align-items-start gap-2 mt-3">
+          <span class="ico text-success fs-5">⏱</span>
+          <div>
+            <strong>Activity monitoring</strong>
+            <div class="text-muted small">Records whether you are active or idle every 30 seconds using system idle-time APIs. No keystrokes or mouse input is logged.</div>
+          </div>
+        </li>
+        <li class="d-flex align-items-start gap-2 mt-3">
+          <span class="ico text-warning fs-5">🔒</span>
+          <div>
+            <strong>Local-only storage</strong>
+            <div class="text-muted small">Everything is stored in an SQLite database at <code>data/monitor.db</code> on your local disk. Access is protected by a username and password.</div>
+          </div>
+        </li>
+        <li class="d-flex align-items-start gap-2 mt-3">
+          <span class="ico text-info fs-5">🌐</span>
+          <div>
+            <strong>Web dashboard</strong>
+            <div class="text-muted small">Browse screenshots and activity logs through a local web interface at <code>http://localhost:8080</code>.</div>
+          </div>
+        </li>
+      </ul>
+
+      <hr class="my-4"/>
+      <div class="alert alert-info py-2 small mb-0">
+        <strong>Privacy note:</strong> My Monitor is a local tool for personal productivity tracking.
+        No data ever leaves your computer.
+      </div>
+    </div>
+    <div class="card-footer d-flex justify-content-end gap-2 bg-transparent border-0 pb-4 pe-4">
+      <button class="btn btn-primary" onclick="goTo(2)">Next: Permissions →</button>
+    </div>
+  </div>
+
+  <!-- ═══════════ STEP 2 — Permissions ═══════════ -->
+  <div class="card shadow-sm step-panel" id="panel-2">
+    <div class="card-body p-4">
+      <h5 class="fw-bold mb-1">Permissions &amp; Requirements</h5>
+
+      {{if eq .Platform "darwin"}}
+      <p class="text-muted small mb-4">
+        My Monitor needs <strong>Screen Recording</strong> permission to capture screenshots.
+        Without it, <code>screencapture</code> silently produces a blank image.
+      </p>
+      {{else if eq .Platform "linux"}}
+      <p class="text-muted small mb-4">
+        My Monitor uses <strong>scrot</strong> for screenshots and <strong>xprintidle</strong> for idle detection.
+        Install them with: <code>sudo apt install scrot xprintidle</code>
+      </p>
+      {{else}}
+      <p class="text-muted small mb-4">
+        On Windows, My Monitor uses built-in Win32 APIs for screenshots and idle detection.
+        No special permissions are required.
+      </p>
+      {{end}}
+
+      <!-- Screen Recording / Screenshot -->
+      <div class="perm-card">
+        <div class="d-flex justify-content-between align-items-start mb-2">
+          <div>
+            {{if eq .Platform "darwin"}}
+            <span class="fw-semibold">Screen Recording</span>
+            <span class="ms-2 text-danger small fw-bold">Required</span>
+            {{else if eq .Platform "linux"}}
+            <span class="fw-semibold">Screenshot Tool (scrot / imagemagick)</span>
+            <span class="ms-2 text-danger small fw-bold">Required</span>
+            {{else}}
+            <span class="fw-semibold">Screen Capture (Win32 GDI)</span>
+            <span class="ms-2 text-secondary small">Built-in</span>
+            {{end}}
+          </div>
+          <span class="badge bg-secondary badge-status" id="badge-screen">Not checked</span>
+        </div>
+
+        {{if eq .Platform "darwin"}}
+        <p class="text-muted small mb-3">
+          Used by <code>screencapture</code> to take full-screen snapshots. Denied by default — you must grant it once in System Settings.
+        </p>
+        <div class="bg-light rounded p-3 mb-3 small">
+          <strong>How to grant Screen Recording:</strong>
+          <ol class="mb-0 mt-2 ps-3">
+            <li>Click <strong>"Open Screen Recording Settings"</strong> below.</li>
+            <li>In the list, find <strong>Terminal</strong> (or your shell app) and enable it.</li>
+            <li id="restart-hint" style="display:none">After enabling, <strong>quit and reopen Terminal</strong>, then click Recheck.</li>
+            <li>Click <strong>"Recheck"</strong> once you've granted access.</li>
+          </ol>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+          <button class="btn btn-sm btn-outline-secondary" onclick="openScreenRecordingSettings()">Open Screen Recording Settings</button>
+          <button class="btn btn-sm btn-outline-primary" id="btn-recheck" onclick="checkPermissions()">Recheck</button>
+        </div>
+        {{else if eq .Platform "linux"}}
+        <p class="text-muted small mb-3">
+          Install scrot with: <code>sudo apt install scrot</code> (Debian/Ubuntu) or <code>sudo dnf install scrot</code> (Fedora).
+          Alternatively, install ImageMagick: <code>sudo apt install imagemagick</code>
+        </p>
+        <button class="btn btn-sm btn-outline-primary" onclick="checkPermissions()">Recheck</button>
+        {{else}}
+        <p class="text-muted small mb-0">
+          Uses the built-in Win32 GDI API. No installation or permission required.
+        </p>
+        {{end}}
+      </div>
+
+      <!-- Activity Monitor / Idle time -->
+      <div class="perm-card">
+        <div class="d-flex justify-content-between align-items-start mb-2">
+          <div>
+            {{if eq .Platform "darwin"}}
+            <span class="fw-semibold">Activity Monitor (ioreg)</span>
+            <span class="ms-2 text-secondary small">No permission needed</span>
+            {{else if eq .Platform "linux"}}
+            <span class="fw-semibold">Idle Time (xprintidle)</span>
+            <span class="ms-2 text-warning small">Optional</span>
+            {{else}}
+            <span class="fw-semibold">Idle Detection (GetLastInputInfo)</span>
+            <span class="ms-2 text-secondary small">Built-in</span>
+            {{end}}
+          </div>
+          <span class="badge bg-secondary badge-status" id="badge-activity">Not checked</span>
+        </div>
+        {{if eq .Platform "darwin"}}
+        <p class="text-muted small mb-0">
+          Reads HID idle-time from the macOS kernel via <code>ioreg</code>. No special permission is required.
+        </p>
+        {{else if eq .Platform "linux"}}
+        <p class="text-muted small mb-0">
+          Install with: <code>sudo apt install xprintidle</code>. Without it, idle detection is disabled but screenshots still work.
+        </p>
+        {{else}}
+        <p class="text-muted small mb-0">
+          Uses the built-in Win32 <code>GetLastInputInfo</code> API. Always available on Windows.
+        </p>
+        {{end}}
+      </div>
+
+      <!-- Test screenshot preview -->
+      <div id="preview-section" style="display:none">
+        <hr/>
+        <p class="small fw-semibold mb-2">Test screenshot preview:</p>
+        <img id="previewImg" alt="Test screenshot"/>
+        <p class="text-muted small mt-2" id="preview-note"></p>
+      </div>
+
+      <div id="perm-alert" class="alert small py-2 mt-3" style="display:none"></div>
+    </div>
+    <div class="card-footer d-flex justify-content-between gap-2 bg-transparent border-0 pb-4 px-4">
+      <button class="btn btn-outline-secondary" onclick="goTo(1)">← Back</button>
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-outline-secondary" onclick="takeTestScreenshot()">Take Test Screenshot</button>
+        <button class="btn btn-primary" onclick="goTo(3)">Next: Auto-start →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ STEP 3 — Auto-start ═══════════ -->
+  <div class="card shadow-sm step-panel" id="panel-3">
+    <div class="card-body p-4">
+      <h5 class="fw-bold mb-1">Auto-start on Login</h5>
+      <p class="text-muted small mb-4">
+        {{if eq .Platform "darwin"}}
+        Install a macOS <strong>LaunchAgent</strong> so My Monitor starts automatically every time you log in — even after a reboot.
+        {{else if eq .Platform "linux"}}
+        Install a <strong>systemd user service</strong> so My Monitor starts automatically every time you log in.
+        {{else}}
+        Add a <strong>Windows startup entry</strong> (registry) so My Monitor starts automatically every time you log in.
+        {{end}}
+      </p>
+
+      <div class="perm-card">
+        <div class="d-flex justify-content-between align-items-start mb-2">
+          {{if eq .Platform "darwin"}}
+          <span class="fw-semibold">LaunchAgent</span>
+          {{else if eq .Platform "linux"}}
+          <span class="fw-semibold">Systemd User Service</span>
+          {{else}}
+          <span class="fw-semibold">Startup Registry Entry</span>
+          {{end}}
+          <span class="badge bg-secondary badge-status" id="badge-la">Checking…</span>
+        </div>
+        <p class="text-muted small mb-0" id="la-plist-path"></p>
+
+        <div class="mt-3 d-flex gap-2">
+          <button class="btn btn-sm btn-success" id="btn-la-install" onclick="installLaunchAgent()" style="display:none">Install</button>
+          <button class="btn btn-sm btn-outline-danger" id="btn-la-remove" onclick="removeLaunchAgent()" style="display:none">Remove</button>
+        </div>
+      </div>
+
+      <div class="alert alert-light border small mb-0">
+        {{if eq .Platform "darwin"}}
+        <strong>What it does:</strong> Writes a <code>.plist</code> file to <code>~/Library/LaunchAgents/</code> and registers it with <code>launchctl</code>.
+        {{else if eq .Platform "linux"}}
+        <strong>What it does:</strong> Writes a <code>.service</code> file to <code>~/.config/systemd/user/</code> and enables it with <code>systemctl --user</code>.
+        {{else}}
+        <strong>What it does:</strong> Adds an entry to <code>HKCU\Software\Microsoft\Windows\CurrentVersion\Run</code> so the app launches at login.
+        {{end}}
+        My Monitor restarts automatically if it crashes. You can remove it here at any time.
+      </div>
+
+      <div id="la-alert" class="alert small py-2 mt-3" style="display:none"></div>
+    </div>
+    <div class="card-footer d-flex justify-content-between bg-transparent border-0 pb-4 px-4">
+      <button class="btn btn-outline-secondary" onclick="goTo(2)">← Back</button>
+      <button class="btn btn-primary" onclick="goTo(4)">Next: Security →</button>
+    </div>
+  </div>
+
+  <!-- ═══════════ STEP 4 — Security ═══════════ -->
+  <div class="card shadow-sm step-panel" id="panel-4">
+    <div class="card-body p-4">
+      <h5 class="fw-bold mb-1">Change Default Password</h5>
+      <p class="text-muted small mb-4">
+        The default login is <code>admin / admin</code>. Since My Monitor stores screenshots of your screen, please set a strong password now.
+      </p>
+
+      <div class="alert alert-warning py-2 small mb-4" id="pw-warning">
+        <strong>⚠ You are using the default password.</strong> Change it below before continuing.
+      </div>
+
+      <form id="pw-form" onsubmit="changePassword(event)" autocomplete="off">
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Current password</label>
+          <input type="password" id="pw-current" class="form-control" placeholder="admin" required/>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">New password</label>
+          <input type="password" id="pw-new" class="form-control" placeholder="min. 6 characters" required minlength="6"/>
+        </div>
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Confirm new password</label>
+          <input type="password" id="pw-confirm" class="form-control" required/>
+        </div>
+        <button type="submit" class="btn btn-primary" id="btn-pw-save">Save Password</button>
+      </form>
+
+      <div id="pw-alert" class="alert small py-2 mt-3" style="display:none"></div>
+    </div>
+    <div class="card-footer d-flex justify-content-between bg-transparent border-0 pb-4 px-4">
+      <button class="btn btn-outline-secondary" onclick="goTo(3)">← Back</button>
+      <button class="btn btn-primary" id="btn-to-done" onclick="goTo(5)" {{if not .SetupComplete}}disabled{{end}}>Next: Finish →</button>
+    </div>
+  </div>
+
+  <!-- ═══════════ STEP 5 — Done ═══════════ -->
+  <div class="card shadow-sm step-panel" id="panel-5">
+    <div class="card-body p-4 text-center">
+      <div class="done-check">✓</div>
+      <h5 class="fw-bold mb-1">You're all set!</h5>
+      <p class="text-muted small mb-4">My Monitor is running and configured.</p>
+
+      <div class="text-start">
+        <ul class="list-unstyled" id="done-checklist">
+          <li class="d-flex align-items-center gap-2 mb-2" id="done-screen">
+            <span class="badge bg-secondary">?</span> Screen capture
+          </li>
+          <li class="d-flex align-items-center gap-2 mb-2" id="done-activity">
+            <span class="badge bg-secondary">?</span> Activity monitoring
+          </li>
+          <li class="d-flex align-items-center gap-2 mb-2" id="done-la">
+            <span class="badge bg-secondary">?</span> Auto-start on login
+          </li>
+          <li class="d-flex align-items-center gap-2 mb-2" id="done-pw">
+            <span class="badge bg-secondary">?</span> Password changed
+          </li>
+        </ul>
+      </div>
+
+      <hr/>
+      <div class="text-muted small mb-4">
+        <p class="mb-1">Screenshots are captured every <strong>3 minutes</strong>.</p>
+        <p class="mb-1">Activity is sampled every <strong>30 seconds</strong>.</p>
+        <p class="mb-0">You can revisit this wizard at any time via the <strong>Setup</strong> link in the navbar.</p>
+      </div>
+
+      <a href="/" class="btn btn-success btn-lg px-5" onclick="markSetupComplete()">
+        Go to Dashboard →
+      </a>
+    </div>
+    <div class="card-footer d-flex justify-content-start bg-transparent border-0 pb-4 px-4">
+      <button class="btn btn-outline-secondary btn-sm" onclick="goTo(4)">← Back</button>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<script>
+// ── State ──────────────────────────────────────────────────────
+const PLATFORM = "{{.Platform}}";
+const state = {
+  step: 1,
+  perms: { screenRecording: false, activityMonitor: false },
+  launchAgent: false,
+  passwordChanged: false,
+};
+
+// ── Step navigation ────────────────────────────────────────────
+function goTo(n) {
+  state.step = n;
+
+  document.querySelectorAll('.step-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById('panel-' + n).classList.add('active');
+
+  document.querySelectorAll('#stepper .step-item').forEach(el => {
+    const s = parseInt(el.dataset.step);
+    el.classList.remove('active', 'done');
+    if (s < n)        el.classList.add('done');
+    else if (s === n) el.classList.add('active');
+  });
+
+  if (n === 2) checkPermissions();
+  if (n === 3) checkLaunchAgent();
+  if (n === 5) buildDoneChecklist();
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ── Permissions ────────────────────────────────────────────────
+async function checkPermissions() {
+  setBadge('badge-screen',   'Checking…', 'secondary');
+  setBadge('badge-activity', 'Checking…', 'secondary');
+
+  try {
+    const r = await fetch('/api/permissions');
+    const data = await r.json();
+    state.perms = data;
+
+    if (data.screenRecording) {
+      setBadge('badge-screen', '✓ Ready', 'success');
+      showAlert('perm-alert', '✓ Screen capture is available.', 'success');
+    } else {
+      setBadge('badge-screen', '✗ Not available', 'danger');
+      if (PLATFORM === 'darwin') {
+        document.getElementById('restart-hint').style.display = 'list-item';
+        showAlert('perm-alert', '✗ Screen Recording not detected. Follow the instructions above and click Recheck.', 'warning');
+      } else {
+        showAlert('perm-alert', '✗ Screenshot tool not found. Install scrot or imagemagick and click Recheck.', 'warning');
+      }
+    }
+
+    if (data.activityMonitor) {
+      setBadge('badge-activity', '✓ Working', 'success');
+    } else {
+      setBadge('badge-activity', PLATFORM === 'linux' ? '⚠ xprintidle not found' : '✗ Not available', 'warning');
+    }
+  } catch(e) {
+    showAlert('perm-alert', 'Error contacting server: ' + e.message, 'danger');
+  }
+}
+
+async function takeTestScreenshot() {
+  showAlert('perm-alert', 'Taking test screenshot…', 'info');
+  try {
+    const r = await fetch('/api/test-screenshot');
+    const data = await r.json();
+    if (data.error) { showAlert('perm-alert', '✗ ' + data.error, 'danger'); return; }
+
+    document.getElementById('preview-section').style.display = 'block';
+    const img = document.getElementById('previewImg');
+    img.src = data.url + '?t=' + Date.now();
+    img.style.display = 'block';
+
+    const note = data.ok
+      ? `✓ Screenshot captured (${data.sizeKB} KB) — looks good!`
+      : `⚠ Screenshot captured but very small (${data.sizeKB} KB). Check permissions/tools.`;
+    document.getElementById('preview-note').textContent = note;
+
+    state.perms.screenRecording = data.ok;
+    setBadge('badge-screen', data.ok ? '✓ Ready' : '✗ Not available', data.ok ? 'success' : 'danger');
+    showAlert('perm-alert', note, data.ok ? 'success' : 'warning');
+  } catch(e) {
+    showAlert('perm-alert', 'Error: ' + e.message, 'danger');
+  }
+}
+
+function openScreenRecordingSettings() {
+  window.location.href = 'x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_ScreenRecording';
+}
+
+// ── LaunchAgent / Auto-start ───────────────────────────────────
+async function checkLaunchAgent() {
+  setBadge('badge-la', 'Checking…', 'secondary');
+  try {
+    const r = await fetch('/api/launchagent/status');
+    const data = await r.json();
+    state.launchAgent = data.installed;
+    updateLaunchAgentUI(data.installed, data.path || data.plistPath);
+  } catch(e) {
+    setBadge('badge-la', 'Error', 'danger');
+  }
+}
+
+function updateLaunchAgentUI(installed, path) {
+  setBadge('badge-la', installed ? '✓ Installed' : 'Not installed', installed ? 'success' : 'secondary');
+  document.getElementById('la-plist-path').textContent = path ? 'Path: ' + path : '';
+  document.getElementById('btn-la-install').style.display = installed ? 'none' : '';
+  document.getElementById('btn-la-remove').style.display  = installed ? '' : 'none';
+}
+
+async function installLaunchAgent() {
+  showAlert('la-alert', 'Installing…', 'info');
+  try {
+    const r = await fetch('/api/launchagent/install', { method: 'POST' });
+    const data = await r.json();
+    if (data.error) { showAlert('la-alert', '✗ ' + data.error, 'danger'); return; }
+    state.launchAgent = true;
+    updateLaunchAgentUI(true, data.path || data.plistPath);
+    showAlert('la-alert', '✓ ' + data.message, 'success');
+  } catch(e) {
+    showAlert('la-alert', 'Error: ' + e.message, 'danger');
+  }
+}
+
+async function removeLaunchAgent() {
+  showAlert('la-alert', 'Removing…', 'info');
+  try {
+    const r = await fetch('/api/launchagent/remove', { method: 'POST' });
+    const data = await r.json();
+    if (data.error) { showAlert('la-alert', '✗ ' + data.error, 'danger'); return; }
+    state.launchAgent = false;
+    updateLaunchAgentUI(false, '');
+    showAlert('la-alert', '✓ ' + data.message, 'success');
+  } catch(e) {
+    showAlert('la-alert', 'Error: ' + e.message, 'danger');
+  }
+}
+
+// ── Password ───────────────────────────────────────────────────
+async function changePassword(e) {
+  e.preventDefault();
+  const current = document.getElementById('pw-current').value;
+  const nw      = document.getElementById('pw-new').value;
+  const confirm = document.getElementById('pw-confirm').value;
+
+  if (nw !== confirm) {
+    showAlert('pw-alert', 'Passwords do not match.', 'danger');
+    return;
+  }
+  if (nw.length < 6) {
+    showAlert('pw-alert', 'New password must be at least 6 characters.', 'danger');
+    return;
+  }
+
+  const btn = document.getElementById('btn-pw-save');
+  btn.disabled = true; btn.textContent = 'Saving…';
+
+  try {
+    const r = await fetch('/api/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ current, new: nw }),
+    });
+    const data = await r.json();
+
+    if (data.error) {
+      showAlert('pw-alert', '✗ ' + data.error, 'danger');
+      btn.disabled = false; btn.textContent = 'Save Password';
+      return;
+    }
+
+    state.passwordChanged = true;
+    showAlert('pw-alert', '✓ Password updated successfully!', 'success');
+    document.getElementById('pw-warning').style.display = 'none';
+    document.getElementById('pw-form').reset();
+    document.getElementById('btn-to-done').disabled = false;
+    btn.textContent = 'Saved ✓';
+  } catch(e) {
+    showAlert('pw-alert', 'Error: ' + e.message, 'danger');
+    btn.disabled = false; btn.textContent = 'Save Password';
+  }
+}
+
+// ── Done checklist ─────────────────────────────────────────────
+function buildDoneChecklist() {
+  setDoneItem('done-screen',   state.perms.screenRecording, 'Screen capture');
+  setDoneItem('done-activity', state.perms.activityMonitor, 'Activity monitoring');
+  setDoneItem('done-la',       state.launchAgent,           'Auto-start on login');
+  setDoneItem('done-pw',       state.passwordChanged,       'Password changed');
+}
+
+function setDoneItem(id, ok, label) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.innerHTML = `<span class="badge ${ok ? 'bg-success' : 'bg-secondary'}">${ok ? '✓' : '–'}</span> ${label}`;
+}
+
+async function markSetupComplete() {
+  try {
+    await fetch('/api/setup/complete', { method: 'POST' });
+  } catch(_) {}
+}
+
+// ── Helpers ────────────────────────────────────────────────────
+function setBadge(id, text, color) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'badge bg-' + color + ' badge-status';
+}
+
+function showAlert(id, msg, type) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = msg;
+  el.className = 'alert alert-' + type + ' small py-2 mt-3';
+  el.style.display = 'block';
+}
+
+// ── Skip setup ─────────────────────────────────────────────────
+async function skipSetup() {
+  try { await fetch('/api/setup/complete', { method: 'POST' }); } catch(_) {}
+  window.location.href = '/';
+}
+
+// ── Init ───────────────────────────────────────────────────────
+{{if .SetupComplete}}
+document.addEventListener('DOMContentLoaded', () => {
+  const btn = document.getElementById('btn-to-done');
+  if (btn) btn.disabled = false;
+  state.passwordChanged = true;
+  document.getElementById('pw-warning').style.display = 'none';
+});
+{{end}}
+</script>
+</body>
+</html>

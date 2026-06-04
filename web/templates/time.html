@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>My Monitor — Time Tracker</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"/>
+  <style>
+    :root {
+      --active-color: #198754;
+      --inactive-color: #6c757d;
+    }
+    body { background: #f0f2f5; }
+
+    /* ── Clock button ─────────────────────────────── */
+    #clock-btn {
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: .03em;
+      padding: .75rem 3rem;
+      border-radius: 50px;
+      transition: transform .1s, box-shadow .2s;
+    }
+    #clock-btn:active { transform: scale(.97); }
+    #clock-btn.btn-clocked-in {
+      background: #dc3545; border-color: #dc3545; color: #fff;
+    }
+    #clock-btn.btn-clocked-out {
+      background: #198754; border-color: #198754; color: #fff;
+    }
+
+    /* Pulsing dot shown while clocked in */
+    .pulse-dot {
+      display: inline-block;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #ff4444;
+      margin-right: 6px;
+      animation: pulse 1.4s infinite;
+    }
+    @keyframes pulse {
+      0%   { box-shadow: 0 0 0 0 rgba(255,68,68,.7); }
+      70%  { box-shadow: 0 0 0 8px rgba(255,68,68,0); }
+      100% { box-shadow: 0 0 0 0 rgba(255,68,68,0); }
+    }
+
+    /* ── Timer display ────────────────────────────── */
+    #timer-display {
+      font-size: 2.8rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: .05em;
+      color: #212529;
+      min-height: 56px;
+    }
+    #timer-display.idle { color: #adb5bd; }
+
+    /* ── Stat cards ───────────────────────────────── */
+    .stat-value { font-size: 1.6rem; font-weight: 700; }
+
+    /* ── Filter pills ─────────────────────────────── */
+    .filter-pill {
+      cursor: pointer;
+      border-radius: 50px;
+      padding: .3rem .9rem;
+      font-size: .8rem;
+      font-weight: 600;
+      border: 1.5px solid #dee2e6;
+      background: #fff;
+      color: #495057;
+      transition: all .15s;
+      user-select: none;
+    }
+    .filter-pill:hover { border-color: #0d6efd; color: #0d6efd; }
+    .filter-pill.active { background: #0d6efd; border-color: #0d6efd; color: #fff; }
+
+    /* ── Table ────────────────────────────────────── */
+    .date-group-header td {
+      background: #e9ecef;
+      font-weight: 600;
+      font-size: .8rem;
+      padding: .45rem 1rem;
+      color: #495057;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .date-group-footer td {
+      background: #f8f9fa;
+      font-weight: 600;
+      font-size: .82rem;
+      color: #495057;
+      border-top: 1px solid #dee2e6;
+    }
+    .entry-active-row { background: #f0faf5; }
+    .entry-active-row td { color: #0d6b3e; }
+
+    .badge-active {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: .75rem; padding: .3em .65em;
+    }
+
+    #grand-total-row td { font-size: .95rem; }
+    .empty-state { padding: 3rem; text-align: center; color: #adb5bd; }
+    .empty-state .icon { font-size: 3rem; }
+
+    /* Recording indicator in navbar */
+    .rec-indicator {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: .78rem; color: #ff4444; font-weight: 600;
+    }
+    .rec-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #ff4444;
+      animation: pulse 1.4s infinite;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Navbar ──────────────────────────────────────────────────── -->
+<nav class="navbar navbar-dark bg-dark px-4">
+  <div class="d-flex align-items-center gap-3">
+    <a href="/" class="navbar-brand fw-semibold mb-0">My Monitor</a>
+    <a href="/time" class="text-white text-decoration-none small fw-semibold">Time Tracker</a>
+    <a href="/" class="text-white-50 text-decoration-none small">Dashboard</a>
+  </div>
+  <div class="d-flex align-items-center gap-3">
+    <span class="rec-indicator" id="nav-rec" style="display:none">
+      <span class="rec-dot"></span> REC
+    </span>
+    <a href="/logout" class="btn btn-sm btn-outline-light">Logout</a>
+  </div>
+</nav>
+
+<div class="container-fluid py-4" style="max-width:1000px">
+
+  <!-- ── Clock control card ─────────────────────────────────────── -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-body py-4 text-center">
+
+      <div id="timer-display" class="mb-3 idle">00:00:00</div>
+
+      <div class="mb-1 text-muted small" id="clock-status-label">Not clocked in</div>
+      <div class="mb-4 text-muted small" id="clock-since" style="display:none"></div>
+
+      <button id="clock-btn" class="btn btn-clocked-out mb-4" onclick="toggleClock()">
+        Clock In
+      </button>
+
+      <!-- Stat pills -->
+      <div class="d-flex justify-content-center gap-4 pt-3 border-top">
+        <div class="text-center">
+          <div class="stat-value" id="today-total">0h 00m</div>
+          <div class="text-muted small">Today's total</div>
+        </div>
+        <div class="vr"></div>
+        <div class="text-center">
+          <div class="stat-value" id="today-sessions">0</div>
+          <div class="text-muted small">Sessions today</div>
+        </div>
+        <div class="vr"></div>
+        <div class="text-center">
+          <div class="stat-value" id="current-session">—</div>
+          <div class="text-muted small">Current session</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Filters ────────────────────────────────────────────────── -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-body py-3">
+      <div class="d-flex flex-wrap align-items-center gap-2">
+        <!-- Quick filters -->
+        <span class="text-muted small fw-semibold me-1">Filter:</span>
+        <span class="filter-pill active" id="pill-today"     onclick="quickFilter('today',this)">Today</span>
+        <span class="filter-pill"        id="pill-yesterday" onclick="quickFilter('yesterday',this)">Yesterday</span>
+        <span class="filter-pill"        id="pill-week"      onclick="quickFilter('week',this)">This Week</span>
+        <span class="filter-pill"        id="pill-month"     onclick="quickFilter('month',this)">This Month</span>
+
+        <span class="text-muted small mx-2">or</span>
+
+        <!-- Custom range -->
+        <input type="date" id="filter-from" class="form-control form-control-sm" style="width:145px"/>
+        <span class="text-muted small">→</span>
+        <input type="date" id="filter-to"   class="form-control form-control-sm" style="width:145px"/>
+        <button class="btn btn-sm btn-outline-primary" onclick="applyCustomFilter()">Apply</button>
+        <button class="btn btn-sm btn-link text-muted p-0" onclick="exportCSV()">Export CSV</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Entries table ──────────────────────────────────────────── -->
+  <div class="card shadow-sm">
+    <div class="card-header d-flex justify-content-between align-items-center">
+      <span class="fw-semibold">Clock-in / Clock-out Log</span>
+      <span class="text-muted small" id="range-label"></span>
+    </div>
+    <div class="card-body p-0">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0" id="entries-table">
+          <thead class="table-light">
+            <tr>
+              <th style="width:110px">Clock In</th>
+              <th style="width:110px">Clock Out</th>
+              <th style="width:100px">Duration</th>
+              <th style="width:90px">Status</th>
+            </tr>
+          </thead>
+          <tbody id="entries-body">
+            <tr><td colspan="4" class="empty-state">
+              <div class="icon">⏱</div>
+              <div>Loading…</div>
+            </td></tr>
+          </tbody>
+          <tfoot>
+            <tr id="grand-total-row" style="display:none">
+              <td colspan="2" class="fw-bold ps-3 py-2">Period Total</td>
+              <td class="fw-bold py-2" id="grand-total-cell">—</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<script>
+// ── State ──────────────────────────────────────────────────────────
+let st = {
+  clockedIn: false,
+  currentEntry: null,
+  timerInterval: null,
+  refreshInterval: null,
+  currentEntries: [],
+  currentTotalSec: 0,
+};
+
+// ── Init ────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', async () => {
+  setDateInputsToday();
+  await refreshStatus();
+  await loadEntries();  // default: today
+
+  // Auto-refresh table every 60 s when clocked in
+  st.refreshInterval = setInterval(() => {
+    if (st.clockedIn) loadEntries();
+  }, 60000);
+});
+
+// ── Clock toggle ───────────────────────────────────────────────────
+async function toggleClock() {
+  const btn = document.getElementById('clock-btn');
+  btn.disabled = true;
+
+  try {
+    const url = st.clockedIn ? '/api/time/clockout' : '/api/time/clockin';
+    const r = await fetch(url, { method: 'POST' });
+    const data = await r.json();
+    if (data.error) { showToast(data.error, 'danger'); return; }
+
+    await refreshStatus();
+    await loadEntries();   // reload table immediately
+  } catch(e) {
+    showToast('Network error: ' + e.message, 'danger');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Fetch & apply current clock status ────────────────────────────
+async function refreshStatus() {
+  try {
+    const r = await fetch('/api/time/status');
+    const data = await r.json();
+    applyStatus(data);
+  } catch(_) {}
+}
+
+function applyStatus(data) {
+  st.clockedIn     = data.clockedIn;
+  st.currentEntry  = data.currentEntry || null;
+
+  // Timer
+  stopTimer();
+  if (st.clockedIn && st.currentEntry) {
+    const start = new Date(st.currentEntry.clockIn);
+    startTimer(start);
+    document.getElementById('clock-since').textContent =
+      'Since ' + fmtTimestamp(st.currentEntry.clockIn);
+    document.getElementById('clock-since').style.display = '';
+  } else {
+    document.getElementById('timer-display').textContent = '00:00:00';
+    document.getElementById('timer-display').classList.add('idle');
+    document.getElementById('clock-since').style.display = 'none';
+  }
+
+  // Button
+  const btn = document.getElementById('clock-btn');
+  const label = document.getElementById('clock-status-label');
+  const navRec = document.getElementById('nav-rec');
+  if (st.clockedIn) {
+    btn.textContent = ''; // clear, rebuild with dot
+    btn.innerHTML = '<span class="pulse-dot"></span>Clock Out';
+    btn.classList.replace('btn-clocked-out', 'btn-clocked-in');
+    label.textContent = 'Clocked in — screen recording active';
+    navRec.style.removeProperty('display');
+  } else {
+    btn.textContent = 'Clock In';
+    btn.classList.replace('btn-clocked-in', 'btn-clocked-out');
+    label.textContent = 'Not clocked in';
+    navRec.style.display = 'none';
+  }
+
+  // Stats
+  document.getElementById('today-total').textContent    = fmtDuration(data.todaySec);
+  document.getElementById('today-sessions').textContent = data.todaySessions;
+  document.getElementById('current-session').textContent =
+    (st.clockedIn && st.currentEntry) ? fmtDuration(st.currentEntry.durationSec) : '—';
+}
+
+// ── Live timer ─────────────────────────────────────────────────────
+function startTimer(startDate) {
+  const display = document.getElementById('timer-display');
+  display.classList.remove('idle');
+
+  const tick = () => {
+    const sec = Math.floor((Date.now() - startDate) / 1000);
+    display.textContent = fmtDurationHMS(sec);
+
+    // Update "current session" stat too
+    const el = document.getElementById('current-session');
+    if (el) el.textContent = fmtDuration(sec);
+  };
+  tick();
+  st.timerInterval = setInterval(tick, 1000);
+}
+
+function stopTimer() {
+  if (st.timerInterval) { clearInterval(st.timerInterval); st.timerInterval = null; }
+}
+
+// ── Load & render entries ──────────────────────────────────────────
+async function loadEntries(from, to) {
+  from = from || document.getElementById('filter-from').value;
+  to   = to   || document.getElementById('filter-to').value;
+
+  let url = '/api/time/entries';
+  if (from) url += '?from=' + from + (to ? '&to=' + to : '');
+
+  try {
+    const r = await fetch(url);
+    const data = await r.json();
+    st.currentEntries  = data.entries  || [];
+    st.currentTotalSec = data.totalSec || 0;
+    renderEntries(st.currentEntries, st.currentTotalSec);
+    updateRangeLabel(data.from, data.to);
+  } catch(e) {
+    document.getElementById('entries-body').innerHTML =
+      `<tr><td colspan="4" class="empty-state text-danger">Error loading entries: ${e.message}</td></tr>`;
+  }
+}
+
+function renderEntries(entries, totalSec) {
+  const tbody = document.getElementById('entries-body');
+  const totalRow = document.getElementById('grand-total-row');
+
+  if (!entries || entries.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4" class="empty-state">
+      <div class="icon mb-2">📋</div>
+      <div class="text-muted">No sessions found for this period.</div>
+    </td></tr>`;
+    totalRow.style.display = 'none';
+    return;
+  }
+
+  // Group by local date
+  const groups = {};
+  entries.forEach(e => {
+    const key = localDateKey(e.clockIn);
+    (groups[key] = groups[key] || []).push(e);
+  });
+
+  let html = '';
+  Object.entries(groups).forEach(([dateKey, dayEntries]) => {
+    // Day total
+    const daySec = dayEntries.reduce((s, e) => s + e.durationSec, 0);
+
+    // Date header row
+    html += `<tr class="date-group-header">
+      <td colspan="3">${fmtDateLabel(dateKey)}</td>
+      <td class="text-end pe-3">${fmtDuration(daySec)}</td>
+    </tr>`;
+
+    dayEntries.forEach(e => {
+      const rowClass = e.isActive ? 'entry-active-row' : '';
+      const clockOut = e.clockOut ? fmtTime(e.clockOut) : '—';
+      const dur = e.isActive
+        ? `<span class="text-success fw-semibold">${fmtDuration(e.durationSec)}</span>`
+        : fmtDuration(e.durationSec);
+
+      const status = e.isActive
+        ? `<span class="badge bg-success badge-active"><span style="width:7px;height:7px;border-radius:50%;background:#fff;display:inline-block;animation:pulse 1.4s infinite"></span>Active</span>`
+        : `<span class="badge bg-light text-secondary border">Done</span>`;
+
+      html += `<tr class="${rowClass}">
+        <td class="ps-4 text-muted">${fmtTime(e.clockIn)}</td>
+        <td class="text-muted">${clockOut}</td>
+        <td>${dur}</td>
+        <td>${status}</td>
+      </tr>`;
+    });
+  });
+
+  tbody.innerHTML = html;
+
+  // Grand total
+  document.getElementById('grand-total-cell').textContent = fmtDuration(totalSec);
+  totalRow.style.display = '';
+}
+
+// ── Quick filters ──────────────────────────────────────────────────
+function quickFilter(preset, el) {
+  document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+  el.classList.add('active');
+
+  const today = new Date();
+  let from, to;
+
+  if (preset === 'today') {
+    from = to = localDate(today);
+  } else if (preset === 'yesterday') {
+    const y = new Date(today); y.setDate(y.getDate() - 1);
+    from = to = localDate(y);
+  } else if (preset === 'week') {
+    const d = new Date(today);
+    d.setDate(d.getDate() - d.getDay()); // Sunday
+    from = localDate(d);
+    to   = localDate(today);
+  } else if (preset === 'month') {
+    from = localDate(today).substring(0,8) + '01';
+    to   = localDate(today);
+  }
+
+  document.getElementById('filter-from').value = from;
+  document.getElementById('filter-to').value   = to;
+  loadEntries(from, to);
+}
+
+function applyCustomFilter() {
+  document.querySelectorAll('.filter-pill').forEach(p => p.classList.remove('active'));
+  loadEntries();
+}
+
+// ── CSV export ─────────────────────────────────────────────────────
+function exportCSV() {
+  if (!st.currentEntries || !st.currentEntries.length) {
+    showToast('No entries to export.', 'warning'); return;
+  }
+  const rows = [['Date','Clock In','Clock Out','Duration (min)','Status']];
+  st.currentEntries.forEach(e => {
+    rows.push([
+      localDateKey(e.clockIn),
+      fmtTime(e.clockIn),
+      e.clockOut ? fmtTime(e.clockOut) : '',
+      Math.floor(e.durationSec / 60),
+      e.isActive ? 'Active' : 'Done',
+    ]);
+  });
+  const csv = rows.map(r => r.map(c => '"' + String(c).replace(/"/g,'""') + '"').join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'time-log-' + localDate(new Date()) + '.csv';
+  a.click();
+}
+
+// ── Helpers ────────────────────────────────────────────────────────
+function fmtDurationHMS(totalSec) {
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const s = totalSec % 60;
+  return `${pad(h)}:${pad(m)}:${pad(s)}`;
+}
+
+function fmtDuration(totalSec) {
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  return h > 0 ? `${h}h ${pad(m)}m` : `${m}m`;
+}
+
+function fmtTime(isoStr) {
+  if (!isoStr) return '—';
+  return new Date(isoStr).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', hour12: true });
+}
+
+function fmtTimestamp(isoStr) {
+  return new Date(isoStr).toLocaleTimeString([], { hour:'2-digit', minute:'2-digit', hour12: true });
+}
+
+function localDate(d) {
+  return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate());
+}
+
+function localDateKey(isoStr) {
+  const d = new Date(isoStr);
+  return localDate(d);
+}
+
+function fmtDateLabel(dateKey) {
+  const d = new Date(dateKey + 'T00:00:00');
+  return d.toLocaleDateString([], { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+}
+
+function pad(n) { return String(n).padStart(2,'0'); }
+
+function setDateInputsToday() {
+  const today = localDate(new Date());
+  document.getElementById('filter-from').value = today;
+  document.getElementById('filter-to').value   = today;
+}
+
+function updateRangeLabel(from, to) {
+  const el = document.getElementById('range-label');
+  if (!el) return;
+  if (from === to) {
+    el.textContent = fmtDateLabel(from);
+  } else {
+    el.textContent = fmtDateLabel(from) + ' → ' + fmtDateLabel(to);
+  }
+}
+
+// ── Toast notification ─────────────────────────────────────────────
+function showToast(msg, type='info') {
+  const id = 'toast-' + Date.now();
+  const div = document.createElement('div');
+  div.id = id;
+  div.style.cssText = 'position:fixed;bottom:1.5rem;right:1.5rem;z-index:9999;min-width:260px';
+  div.innerHTML = `<div class="alert alert-${type} alert-dismissible shadow mb-0" role="alert">
+    ${msg}
+    <button type="button" class="btn-close" onclick="document.getElementById('${id}').remove()"></button>
+  </div>`;
+  document.body.appendChild(div);
+  setTimeout(() => div.remove(), 4000);
+}
+</script>
+</body>
+</html>
