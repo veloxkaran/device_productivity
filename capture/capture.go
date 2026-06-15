@@ -28,7 +28,7 @@ func StartCapture(db *storage.DB, interval time.Duration) {
 }
 
 func take(db *storage.DB) {
-	filename := fmt.Sprintf("screenshot_%s.png", time.Now().Format("20060102_150405"))
+	filename := fmt.Sprintf("screenshot_%s.jpg", time.Now().Format("20060102_150405"))
 	path := filepath.Join(screenshotsDir, filename)
 
 	if err := takeScreenshot(path); err != nil {
