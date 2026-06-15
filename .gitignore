@@ -1,0 +1,16 @@
+# Screenshots
+data/screenshots/
+screenshots/
+
+# Database files
+*.db
+*.db-shm
+*.db-wal
+
+# Build artifacts
+dist/
+build/
+my-monitor
+
+# macOS
+.DS_Store
