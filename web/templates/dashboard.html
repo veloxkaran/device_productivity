@@ -6,20 +6,26 @@
   <title>Monitor — Dashboard</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"/>
   <style>
-    .screenshot-thumb { width: 100%; height: 140px; object-fit: cover; border-radius: 4px; cursor: pointer; }
-    .status-badge { font-size: 1rem; }
-    .activity-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
-    .dot-active { background: #198754; }
-    .dot-idle   { background: #6c757d; }
+    .screenshot-thumb { width:100%; height:140px; object-fit:cover; border-radius:4px; cursor:pointer; }
+    .status-badge { font-size:1rem; }
+    .activity-dot { display:inline-block; width:10px; height:10px; border-radius:50%; }
+    .dot-active { background:#198754; }
+    .dot-idle   { background:#6c757d; }
+    .pulse { animation: pulse 1.5s infinite; }
+    @keyframes pulse {
+      0%,100% { opacity:1; }
+      50%      { opacity:.4; }
+    }
+    #sync-btn { min-width:110px; }
   </style>
-  <meta http-equiv="refresh" content="60"/>
 </head>
 <body class="bg-light">
 
 <nav class="navbar navbar-dark bg-dark px-4">
   <div class="d-flex align-items-center gap-3">
     <span class="navbar-brand fw-semibold mb-0">My Monitor</span>
-    <a href="/time" class="text-white-50 text-decoration-none small">Time Tracker</a>
+    <a href="/time"  class="text-white-50 text-decoration-none small">Time Tracker</a>
+    <a href="/cloud" class="text-white-50 text-decoration-none small">Hajir Sync</a>
     <a href="/setup" class="text-white-50 text-decoration-none small">Setup</a>
   </div>
   <a href="/logout" class="btn btn-sm btn-outline-light">Logout</a>
@@ -34,23 +40,39 @@
   </div>
   {{end}}
 
-  {{if .ClockedIn}}
-  <div class="alert alert-success d-flex align-items-center justify-content-between mb-4 py-2">
-    <span>● <strong>Clocked in</strong> — screen recording is active. <a href="/time" class="alert-link">View Time Tracker</a></span>
-    <form method="POST" action="/api/time/clockout" class="mb-0">
-      <button class="btn btn-sm btn-outline-success">Clock Out</button>
-    </form>
+  {{if not .CloudConfigured}}
+  <div class="alert alert-info d-flex align-items-center justify-content-between mb-4 py-2">
+    <span>Connect this device to <strong>Hajir HRM</strong> to sync your activity and screenshots.</span>
+    <a href="/cloud" class="btn btn-sm btn-info">Connect to Hajir →</a>
   </div>
-  {{else}}
-  <div class="alert alert-secondary d-flex align-items-center justify-content-between mb-4 py-2">
-    <span>Screen recording is <strong>paused</strong> — clock in to start capturing.</span>
-    <a href="/time" class="btn btn-sm btn-success">Clock In →</a>
-  </div>
+  {{else if .Registration}}
+    {{if eq .Registration.Status "pending"}}
+    <div class="alert alert-warning d-flex align-items-center justify-content-between mb-4 py-2">
+      <span>⏳ <strong>Waiting for admin approval.</strong> Your device is registered — sync starts once approved.</span>
+      <a href="/cloud" class="btn btn-sm btn-outline-warning">View Status</a>
+    </div>
+    {{else if eq .Registration.Status "blocked"}}
+    <div class="alert alert-danger d-flex align-items-center justify-content-between mb-4 py-2">
+      <span>🚫 <strong>Device blocked.</strong> Contact your HR admin.</span>
+      <a href="/cloud" class="btn btn-sm btn-outline-danger">Details</a>
+    </div>
+    {{end}}
   {{end}}
 
-  <!-- Status row -->
+  <!-- Clock-in banner — updated live by JS -->
+  <div id="clockin-banner" class="alert mb-4 py-2 d-flex align-items-center justify-content-between"
+       style="display:none!important">
+    <span id="clockin-text"></span>
+    <div class="d-flex gap-2">
+      <button id="clockin-btn"  class="btn btn-sm btn-success"  onclick="doClock('in')"  style="display:none">Clock In</button>
+      <button id="clockout-btn" class="btn btn-sm btn-outline-success" onclick="doClock('out')" style="display:none">Clock Out</button>
+    </div>
+  </div>
+
+  <!-- Status cards -->
   <div class="row g-3 mb-4">
-    <div class="col-md-4">
+    <!-- Current status -->
+    <div class="col-md-3">
       <div class="card shadow-sm h-100">
         <div class="card-body">
           <h6 class="card-subtitle text-muted mb-2">Current Status</h6>
@@ -60,13 +82,14 @@
           <span class="badge bg-secondary status-badge">Idle</span>
           {{end}}
           <p class="mt-2 mb-0 text-muted small">
-            Idle for {{.Status.IdleSeconds}}s &nbsp;·&nbsp;
-            Updated {{.Status.UpdatedAt.Format "15:04:05"}}
+            Idle {{.Status.IdleSeconds}}s &nbsp;·&nbsp; {{.Status.UpdatedAt.Format "15:04:05"}}
           </p>
         </div>
       </div>
     </div>
-    <div class="col-md-4">
+
+    <!-- Screenshots -->
+    <div class="col-md-3">
       <div class="card shadow-sm h-100">
         <div class="card-body">
           <h6 class="card-subtitle text-muted mb-2">Screenshots</h6>
@@ -75,7 +98,9 @@
         </div>
       </div>
     </div>
-    <div class="col-md-4">
+
+    <!-- Activity -->
+    <div class="col-md-3">
       <div class="card shadow-sm h-100">
         <div class="card-body">
           <h6 class="card-subtitle text-muted mb-2">Activity Records</h6>
@@ -84,6 +109,27 @@
         </div>
       </div>
     </div>
+
+    {{if .CloudConfigured}}
+    <!-- Hajir Sync status -->
+    <div class="col-md-3">
+      <div class="card shadow-sm h-100">
+        <div class="card-body">
+          <div class="d-flex align-items-center justify-content-between mb-2">
+            <h6 class="card-subtitle text-muted mb-0">Hajir Sync</h6>
+            <button id="sync-btn" class="btn btn-sm btn-outline-primary py-0" onclick="triggerSync()">
+              Sync Now
+            </button>
+          </div>
+          <div id="sync-online-badge">
+            <span class="badge bg-secondary">Checking…</span>
+          </div>
+          <p id="sync-last" class="text-muted small mt-1 mb-1">Last sync: —</p>
+          <p id="sync-pending" class="text-muted small mb-0"></p>
+        </div>
+      </div>
+    </div>
+    {{end}}
   </div>
 
   <!-- Screenshots grid -->
@@ -103,7 +149,7 @@
         {{end}}
       </div>
       {{else}}
-      <p class="text-muted mb-0">No screenshots yet — first one captured in up to 3 minutes.</p>
+      <p class="text-muted mb-0">No screenshots yet — clock in first, then a screenshot will be captured within minutes.</p>
       {{end}}
     </div>
   </div>
@@ -116,11 +162,7 @@
       <div class="table-responsive">
         <table class="table table-sm table-hover mb-0">
           <thead class="table-light">
-            <tr>
-              <th>Time</th>
-              <th>Status</th>
-              <th>Idle (s)</th>
-            </tr>
+            <tr><th>Time</th><th>Status</th><th>Idle (s)</th></tr>
           </thead>
           <tbody>
             {{range .Activity}}
@@ -140,11 +182,131 @@
         </table>
       </div>
       {{else}}
-      <p class="text-muted p-3 mb-0">No activity recorded yet.</p>
+      <p class="text-muted p-3 mb-0">No activity recorded yet. Activity is only tracked while clocked in.</p>
       {{end}}
     </div>
   </div>
 
 </div>
+
+<script>
+// ── Live clock-in state ───────────────────────────────────────────
+function updateClockBanner(clocked) {
+  const banner   = document.getElementById('clockin-banner');
+  const text     = document.getElementById('clockin-text');
+  const btnIn    = document.getElementById('clockin-btn');
+  const btnOut   = document.getElementById('clockout-btn');
+
+  banner.style.display = '';
+  if (clocked) {
+    banner.className = 'alert alert-success mb-4 py-2 d-flex align-items-center justify-content-between';
+    text.innerHTML   = '<span class="pulse me-1" style="color:#198754">●</span> <strong>Clocked in</strong> — screen recording is active. <a href="/time" class="alert-link">View Time Tracker</a>';
+    btnIn.style.display  = 'none';
+    btnOut.style.display = '';
+  } else {
+    banner.className = 'alert alert-secondary mb-4 py-2 d-flex align-items-center justify-content-between';
+    text.innerHTML   = 'Screen recording is <strong>paused</strong> — clock in to start capturing.';
+    btnIn.style.display  = '';
+    btnOut.style.display = 'none';
+  }
+}
+
+function doClock(action) {
+  const btn = action === 'in'
+    ? document.getElementById('clockin-btn')
+    : document.getElementById('clockout-btn');
+  btn.disabled = true;
+  btn.textContent = '…';
+
+  fetch('/api/time/' + (action === 'in' ? 'clockin' : 'clockout'), { method: 'POST' })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) updateClockBanner(action === 'in');
+    })
+    .catch(() => {})
+    .finally(() => { btn.disabled = false; fetchTimeStatus(); });
+}
+
+function fetchTimeStatus() {
+  fetch('/api/time/status')
+    .then(r => r.json())
+    .then(d => updateClockBanner(d.clockedIn))
+    .catch(() => {});
+}
+
+// ── Sync status ───────────────────────────────────────────────────
+function fmtRelative(iso) {
+  if (!iso) return '—';
+  const diff = Math.floor((Date.now() - new Date(iso)) / 1000);
+  if (diff < 60)  return diff + 's ago';
+  if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+  return Math.floor(diff/3600) + 'h ago';
+}
+
+let prevClockedIn = null;
+
+function fetchSyncStatus() {
+  fetch('/api/sync/status')
+    .then(r => r.json())
+    .then(d => {
+      if (!d.configured) return;
+
+      const badge = document.getElementById('sync-online-badge');
+      const last  = document.getElementById('sync-last');
+      const pend  = document.getElementById('sync-pending');
+      if (!badge) return;
+
+      badge.innerHTML = d.online
+        ? '<span class="badge bg-success">● Online</span>'
+        : '<span class="badge bg-danger">● Offline</span>';
+
+      last.textContent = 'Last sync: ' + fmtRelative(d.last_sync);
+
+      if (d.pending) {
+        const p = d.pending;
+        const parts = [];
+        if (p.screenshots  > 0) parts.push(p.screenshots  + ' screenshots');
+        if (p.time_entries > 0) parts.push(p.time_entries + ' attendance');
+        if (p.summaries    > 0) parts.push(p.summaries    + ' summaries');
+        pend.textContent = parts.length ? 'Pending: ' + parts.join(', ') : 'All synced ✓';
+      }
+    })
+    .catch(() => {});
+}
+
+function triggerSync() {
+  const btn = document.getElementById('sync-btn');
+  if (!btn) return;
+  btn.disabled = true;
+  btn.textContent = 'Syncing…';
+
+  fetch('/api/sync/trigger', { method: 'POST' })
+    .then(() => {
+      // Poll status every 2s for 20s so the user sees the result quickly
+      let polls = 0;
+      const iv = setInterval(() => {
+        fetchSyncStatus();
+        fetchTimeStatus();
+        if (++polls >= 10) {
+          clearInterval(iv);
+          btn.disabled = false;
+          btn.textContent = 'Sync Now';
+        }
+      }, 2000);
+    })
+    .catch(() => { btn.disabled = false; btn.textContent = 'Sync Now'; });
+}
+
+// Initial load
+fetchTimeStatus();
+fetchSyncStatus();
+
+// Poll every 10 seconds
+setInterval(fetchTimeStatus,  10000);
+setInterval(fetchSyncStatus,  10000);
+
+// Reload page every 2 minutes to refresh screenshots/activity list
+setInterval(() => location.reload(), 120000);
+</script>
 </body>
 </html>

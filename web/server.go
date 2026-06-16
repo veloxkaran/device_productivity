@@ -8,7 +8,11 @@ import (
 	"html/template"
 	"log"
 	"my-monitor/auth"
+	"my-monitor/capture"
+	"my-monitor/cloud"
 	"my-monitor/monitor"
+	"my-monitor/registration"
+	"my-monitor/settings"
 	"my-monitor/storage"
 	"net/http"
 	"os"
@@ -106,8 +110,18 @@ func Start(db *storage.DB, addr string) {
 	mux.HandleFunc("/api/time/clockout", requireAuth(apiClockOutHandler(db)))
 	mux.HandleFunc("/api/time/entries", requireAuth(apiTimeEntriesHandler(db)))
 
+	// Screenshot interval settings
+	mux.HandleFunc("/api/settings/screenshot-interval", requireAuth(apiScreenshotIntervalHandler))
+
+	// Sync status + manual trigger
+	mux.HandleFunc("/api/sync/status", requireAuth(apiSyncStatusHandler(db)))
+	mux.HandleFunc("/api/sync/trigger", requireAuth(apiSyncTriggerHandler))
+
+	// Device approval status check
+	mux.HandleFunc("/api/device/check-status", requireAuth(apiDeviceCheckStatusHandler(db)))
+
 	// Cloud setup
-	mux.HandleFunc("/cloud", requireAuth(cloudSetupHandler))
+	mux.HandleFunc("/cloud", requireAuth(cloudSetupHandler(db)))
 
 	// Dashboard (root)
 	mux.HandleFunc("/", requireAuth(dashboardHandler(db)))
@@ -207,12 +221,17 @@ func dashboardHandler(db *storage.DB) http.HandlerFunc {
 			return
 		}
 
+		reg, _ := db.GetDeviceRegistration()
+		cloudCfg := loadCloudConfig()
+
 		tmpl.ExecuteTemplate(w, "dashboard.html", map[string]interface{}{
-			"Screenshots":   views,
-			"Activity":      activity,
-			"Status":        monitor.CurrentStatus(),
-			"SetupComplete": isSetupComplete(),
-			"ClockedIn":     monitor.IsClockedIn(),
+			"Screenshots":      views,
+			"Activity":         activity,
+			"Status":           monitor.CurrentStatus(),
+			"SetupComplete":    isSetupComplete(),
+			"ClockedIn":        monitor.IsClockedIn(),
+			"Registration":     reg,
+			"CloudConfigured":  cloudCfg.URL != "",
 		})
 	}
 }
@@ -446,6 +465,9 @@ func apiClockInHandler(db *storage.DB) http.HandlerFunc {
 			return
 		}
 		monitor.SetClockedIn(true)
+		capture.TriggerNow() // take first screenshot immediately
+		cloud.SetDeviceSessionActive(true)
+		go cloud.WebClockIn() // mirror to Hajir if connected (no-op when standalone)
 		ej := toEntryJSON(*entry)
 		writeJSON(w, map[string]interface{}{"ok": true, "entry": ej})
 	}
@@ -466,6 +488,8 @@ func apiClockOutHandler(db *storage.DB) http.HandlerFunc {
 			return
 		}
 		monitor.SetClockedIn(false)
+		cloud.SetDeviceSessionActive(false)
+		go cloud.WebClockOut() // mirror to Hajir if connected (no-op when standalone)
 		ej := toEntryJSON(*entry)
 		writeJSON(w, map[string]interface{}{"ok": true, "entry": ej})
 	}
@@ -536,6 +560,7 @@ const cloudConfigPath = "data/cloud.json"
 type cloudConfig struct {
 	URL       string `json:"url"`
 	SyncToken string `json:"sync_token"`
+	CompanyID int64  `json:"company_id"`
 }
 
 func loadCloudConfig() cloudConfig {
@@ -553,69 +578,182 @@ func saveCloudConfig(cfg cloudConfig) error {
 	return os.WriteFile(cloudConfigPath, b, 0600)
 }
 
-var cloudSetupHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-	cfg := loadCloudConfig()
+func cloudSetupHandler(db *storage.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		cfg := loadCloudConfig()
+		reg, _ := db.GetDeviceRegistration()
 
-	if r.Method == http.MethodGet {
-		connected := false
-		if cfg.URL != "" && cfg.SyncToken != "" {
-			connected = pingCloud(cfg)
+		if r.Method == http.MethodGet {
+			connected := false
+			if cfg.URL != "" && cfg.SyncToken != "" {
+				connected = pingCloud(cfg)
+			}
+			tmpl.ExecuteTemplate(w, "cloud.html", map[string]interface{}{
+				"Config":       cfg,
+				"Connected":    connected,
+				"Registration": reg,
+			})
+			return
 		}
+
+		action := r.FormValue("action")
+		if action == "disconnect" {
+			saveCloudConfig(cloudConfig{})
+			tmpl.ExecuteTemplate(w, "cloud.html", map[string]interface{}{
+				"Config":  cloudConfig{},
+				"Success": "Disconnected from Hajir.",
+			})
+			return
+		}
+
+		companyID, _ := strconv.ParseInt(strings.TrimSpace(r.FormValue("company_id")), 10, 64)
+		newCfg := cloudConfig{
+			URL:       strings.TrimRight(r.FormValue("url"), "/"),
+			SyncToken: strings.TrimSpace(r.FormValue("sync_token")),
+			CompanyID: companyID,
+		}
+		if newCfg.URL == "" || newCfg.SyncToken == "" || newCfg.CompanyID == 0 {
+			tmpl.ExecuteTemplate(w, "cloud.html", map[string]interface{}{
+				"Config":       newCfg,
+				"Registration": reg,
+				"Error":        "Server URL, Access Token, and Company ID are all required.",
+			})
+			return
+		}
+
+		if !pingCloud(newCfg) {
+			tmpl.ExecuteTemplate(w, "cloud.html", map[string]interface{}{
+				"Config":       newCfg,
+				"Registration": reg,
+				"Error":        "Could not reach the Hajir server. Check the URL and token.",
+			})
+			return
+		}
+
+		if err := saveCloudConfig(newCfg); err != nil {
+			tmpl.ExecuteTemplate(w, "cloud.html", map[string]interface{}{
+				"Config":       newCfg,
+				"Registration": reg,
+				"Error":        "Failed to save config: " + err.Error(),
+			})
+			return
+		}
+
 		tmpl.ExecuteTemplate(w, "cloud.html", map[string]interface{}{
-			"Config":    cfg,
-			"Connected": connected,
+			"Config":       newCfg,
+			"Connected":    true,
+			"Registration": reg,
+			"Success":      "Connected to Hajir! Device registration is in progress.",
+		})
+	}
+}
+
+// ── API: screenshot interval settings ────────────────────────────
+
+func apiScreenshotIntervalHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		s := settings.Get()
+		writeJSON(w, map[string]interface{}{
+			"interval_min":   s.CaptureIntervalMin,
+			"valid_intervals": settings.ValidIntervals,
 		})
 		return
 	}
 
-	action := r.FormValue("action")
-	if action == "disconnect" {
-		saveCloudConfig(cloudConfig{})
-		tmpl.ExecuteTemplate(w, "cloud.html", map[string]interface{}{
-			"Config":  cloudConfig{},
-			"Success": "Disconnected from cloud.",
-		})
+	if r.Method != http.MethodPost {
+		writeJSONError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	newCfg := cloudConfig{
-		URL:       strings.TrimRight(r.FormValue("url"), "/"),
-		SyncToken: strings.TrimSpace(r.FormValue("sync_token")),
+	var body struct {
+		IntervalMin int `json:"interval_min"`
 	}
-	if newCfg.URL == "" || newCfg.SyncToken == "" {
-		tmpl.ExecuteTemplate(w, "cloud.html", map[string]interface{}{
-			"Config": cfg,
-			"Error":  "URL and sync token are required.",
-		})
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSONError(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if body.IntervalMin <= 0 || body.IntervalMin > 120 {
+		writeJSONError(w, "interval_min must be between 1 and 120", http.StatusBadRequest)
 		return
 	}
 
-	if !pingCloud(newCfg) {
-		tmpl.ExecuteTemplate(w, "cloud.html", map[string]interface{}{
-			"Config": newCfg,
-			"Error":  "Could not connect to the cloud server. Check the URL and token.",
-		})
+	if err := settings.SetIntervalMin(body.IntervalMin); err != nil {
+		writeJSONError(w, "failed to save settings: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	if err := saveCloudConfig(newCfg); err != nil {
-		tmpl.ExecuteTemplate(w, "cloud.html", map[string]interface{}{
-			"Config": newCfg,
-			"Error":  "Failed to save config: " + err.Error(),
+	writeJSON(w, map[string]interface{}{"ok": true, "interval_min": body.IntervalMin})
+}
+
+// ── API: sync status ──────────────────────────────────────────────
+
+func apiSyncStatusHandler(db *storage.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		counts, _ := db.GetPendingSyncCounts()
+		cfg := loadCloudConfig()
+		configured := cfg.URL != ""
+
+		lastSync := cloud.LastSyncAt()
+		lastSyncStr := ""
+		if !lastSync.IsZero() {
+			lastSyncStr = lastSync.Format(time.RFC3339)
+		}
+
+		writeJSON(w, map[string]interface{}{
+			"configured": configured,
+			"online":     configured && cloud.IsOnline(),
+			"last_sync":  lastSyncStr,
+			"pending":    counts,
 		})
+	}
+}
+
+// ── API: trigger immediate sync ───────────────────────────────────
+
+func apiSyncTriggerHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	cloud.TriggerSync()
+	writeJSON(w, map[string]interface{}{"ok": true, "message": "Sync triggered"})
+}
 
-	tmpl.ExecuteTemplate(w, "cloud.html", map[string]interface{}{
-		"Config":    newCfg,
-		"Connected": true,
-		"Success":   "Connected! Data will sync in the background.",
-	})
-})
+// ── API: check device approval status immediately ─────────────────
+
+func apiDeviceCheckStatusHandler(db *storage.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONError(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		cfg := loadCloudConfig()
+		if cfg.URL == "" {
+			writeJSONError(w, "cloud not configured", http.StatusBadRequest)
+			return
+		}
+		reg, err := db.GetDeviceRegistration()
+		if err != nil || reg == nil {
+			writeJSONError(w, "device not registered", http.StatusNotFound)
+			return
+		}
+		regCfg := registration.Config{
+			URL:       cfg.URL,
+			Token:     cfg.SyncToken,
+			CompanyID: cfg.CompanyID,
+		}
+		status, err := registration.PollStatus(regCfg, db, reg.MachineID)
+		if err != nil {
+			writeJSONError(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		writeJSON(w, map[string]interface{}{"status": status})
+	}
+}
 
 func pingCloud(cfg cloudConfig) bool {
 	client := &http.Client{Timeout: 5 * time.Second}
-	req, err := http.NewRequest("GET", cfg.URL+"/api/sync/config", nil)
+	req, err := http.NewRequest("GET", cfg.URL+"/api/v2/productivity/device/status", nil)
 	if err != nil {
 		return false
 	}
@@ -625,6 +763,7 @@ func pingCloud(cfg cloudConfig) bool {
 		return false
 	}
 	resp.Body.Close()
-	return resp.StatusCode == http.StatusOK
+	// 401/403 means server is reachable but token may be wrong — still counts as reachable
+	return resp.StatusCode != 0
 }
 

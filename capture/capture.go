@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"my-monitor/monitor"
+	"my-monitor/settings"
 	"my-monitor/storage"
 	"os"
 	"path/filepath"
@@ -12,15 +13,41 @@ import (
 
 const screenshotsDir = "data/screenshots"
 
-func StartCapture(db *storage.DB, interval time.Duration) {
+// triggerCh lets callers request an immediate screenshot (e.g. on clock-in).
+var triggerCh = make(chan struct{}, 1)
+
+// TriggerNow requests an immediate screenshot outside the normal interval.
+// Non-blocking — if a trigger is already queued the extra signal is dropped.
+func TriggerNow() {
+	select {
+	case triggerCh <- struct{}{}:
+	default:
+	}
+}
+
+// StartCapture runs indefinitely. It takes a screenshot every configured
+// interval while clocked in, and also immediately when TriggerNow is called.
+func StartCapture(db *storage.DB) {
 	if err := os.MkdirAll(screenshotsDir, 0755); err != nil {
 		log.Fatalf("capture: cannot create screenshots dir: %v", err)
 	}
 
-	t := time.NewTicker(interval)
-	defer t.Stop()
-	for range t.C {
+	for {
+		interval := settings.CaptureInterval()
+		timer := time.NewTimer(interval)
+
+		select {
+		case <-timer.C:
+			// Normal scheduled capture
+		case <-triggerCh:
+			// Immediate capture requested (e.g. clock-in)
+			timer.Stop()
+		}
+
 		if !monitor.IsClockedIn() {
+			continue
+		}
+		if !settings.Get().ScreenshotsEnabled {
 			continue
 		}
 		take(db)

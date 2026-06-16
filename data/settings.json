@@ -1,0 +1,8 @@
+{
+  "capture_interval_min": 1,
+  "idle_threshold_min": 1,
+  "retention_days": 7,
+  "screenshots_enabled": true,
+  "keyboard_tracking_enabled": true,
+  "mouse_tracking_enabled": true
+}

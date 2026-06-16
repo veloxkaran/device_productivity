@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Monitor — Cloud Setup</title>
+  <title>My Monitor — Connect to Hajir</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"/>
 </head>
 <body class="bg-light">
@@ -11,16 +11,19 @@
 <nav class="navbar navbar-dark bg-dark px-4">
   <div class="d-flex align-items-center gap-3">
     <a href="/" class="navbar-brand fw-semibold mb-0 text-white text-decoration-none">My Monitor</a>
-    <a href="/time" class="text-white-50 text-decoration-none small">Time Tracker</a>
+    <a href="/time"  class="text-white-50 text-decoration-none small">Time Tracker</a>
     <a href="/setup" class="text-white-50 text-decoration-none small">Setup</a>
-    <a href="/cloud" class="text-white text-decoration-none small">Cloud</a>
+    <a href="/cloud" class="text-white text-decoration-none small fw-semibold">Hajir</a>
   </div>
   <a href="/logout" class="btn btn-sm btn-outline-light">Logout</a>
 </nav>
 
-<div class="container py-4" style="max-width:600px">
-  <h5 class="fw-semibold mb-1">Cloud Sync</h5>
-  <p class="text-muted small mb-4">Connect to a Cloud Monitor server to sync your screenshots and attendance data.</p>
+<div class="container py-4" style="max-width:640px">
+
+  <h5 class="fw-semibold mb-1">Connect to Hajir</h5>
+  <p class="text-muted small mb-4">
+    Link this device to your Hajir HRM account. Your administrator must approve the device before syncing begins.
+  </p>
 
   {{if .Success}}
   <div class="alert alert-success py-2">{{.Success}}</div>
@@ -29,61 +32,343 @@
   <div class="alert alert-danger py-2">{{.Error}}</div>
   {{end}}
 
-  <div class="card shadow-sm">
+  <!-- ── Device registration status ── -->
+  {{if .Registration}}
+  <div class="card shadow-sm mb-4">
+    <div class="card-body d-flex align-items-center gap-3">
+      {{if eq .Registration.Status "approved"}}
+        <span class="fs-3">✅</span>
+        <div>
+          <div class="fw-semibold text-success">Device Approved</div>
+          <div class="text-muted small">This device is registered and syncing with Hajir.</div>
+        </div>
+      {{else if eq .Registration.Status "blocked"}}
+        <span class="fs-3">🚫</span>
+        <div>
+          <div class="fw-semibold text-danger">Device Blocked</div>
+          <div class="text-muted small">Your administrator has blocked this device. Contact your HR admin.</div>
+        </div>
+      {{else}}
+        <span class="fs-3">⏳</span>
+        <div class="flex-grow-1">
+          <div class="fw-semibold text-warning">Pending Admin Approval</div>
+          <div class="text-muted small">Your device is registered. Waiting for your HR administrator to approve it.</div>
+        </div>
+        <button id="checkStatusBtn" class="btn btn-sm btn-outline-warning ms-3" onclick="checkApprovalStatus()">
+          Check Status
+        </button>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+
+  <!-- ── Connection form ── -->
+  <div class="card shadow-sm mb-4">
+    <div class="card-header fw-semibold">
+      {{if .Config.URL}}Edit Connection{{else}}Connect Your Device{{end}}
+    </div>
     <div class="card-body">
+
+      <!-- How-to steps -->
+      {{if not .Config.URL}}
+      <div class="alert alert-info py-2 small mb-4">
+        <strong>How to get your Access Token:</strong>
+        <ol class="mb-0 mt-1 ps-3">
+          <li>Log in to <strong>Hajir HRM</strong> on your browser.</li>
+          <li>Go to <strong>Profile → Security → Access Tokens</strong>.</li>
+          <li>Click <strong>Generate Device Token</strong> and copy it here.</li>
+          <li>Enter your <strong>Company ID</strong> (visible in Hajir under Company Settings).</li>
+        </ol>
+      </div>
+      {{end}}
+
       <form method="POST" action="/cloud">
+        <div class="mb-3">
+          <label class="form-label fw-semibold">Hajir Server URL</label>
+          <input type="url" name="url" class="form-control"
+                 placeholder="https://app.hajirhrm.com"
+                 value="{{.Config.URL}}" required/>
+          <div class="form-text">Your company's Hajir instance URL.</div>
+        </div>
 
         <div class="mb-3">
-          <label class="form-label fw-semibold">Cloud URL</label>
-          <input type="url" name="url" class="form-control"
-                 placeholder="http://your-cloud-server:9090"
-                 value="{{.Config.URL}}" required/>
-          <div class="form-text">The address of your Cloud Monitor server.</div>
+          <label class="form-label fw-semibold">Access Token</label>
+          <input type="text" name="sync_token" class="form-control font-monospace"
+                 placeholder="Paste your Hajir access token"
+                 value="{{.Config.SyncToken}}" required
+                 autocomplete="off"/>
+          <div class="form-text">
+            Found in Hajir → <strong>Profile → Security → Access Tokens</strong>. Keep this private.
+          </div>
         </div>
 
         <div class="mb-4">
-          <label class="form-label fw-semibold">Sync Token</label>
-          <input type="text" name="sync_token" class="form-control font-monospace"
-                 placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                 value="{{.Config.SyncToken}}" required/>
+          <label class="form-label fw-semibold">Company ID</label>
+          <input type="number" name="company_id" class="form-control"
+                 placeholder="e.g. 3"
+                 value="{{.Config.CompanyID}}" required min="1"/>
           <div class="form-text">
-            Received when you accepted your team invite. Keep this private.
+            Found in Hajir → <strong>Settings → Edit Company</strong> — shown at the top of the form.
           </div>
         </div>
 
         <div class="d-flex gap-2">
-          <button type="submit" name="action" value="save" class="btn btn-primary">Save &amp; Connect</button>
+          <button type="submit" name="action" value="save" class="btn btn-primary">
+            {{if .Config.URL}}Update &amp; Re-register{{else}}Connect &amp; Register Device{{end}}
+          </button>
           {{if .Config.URL}}
-          <button type="submit" name="action" value="disconnect" class="btn btn-outline-danger">Disconnect</button>
+          <button type="submit" name="action" value="disconnect"
+                  class="btn btn-outline-danger"
+                  onclick="return confirm('Disconnect this device from Hajir?')">
+            Disconnect
+          </button>
           {{end}}
         </div>
       </form>
     </div>
   </div>
 
+  <!-- ── Connection info (when connected) ── -->
   {{if .Config.URL}}
-  <div class="card shadow-sm mt-4">
+  <div class="card shadow-sm">
     <div class="card-body">
-      <h6 class="fw-semibold mb-3">Sync status</h6>
+      <h6 class="fw-semibold mb-3">Connection Details</h6>
       <table class="table table-sm mb-0">
         <tbody>
-          <tr><td class="text-muted">Server</td><td>{{.Config.URL}}</td></tr>
-          <tr><td class="text-muted">Status</td>
-              <td>
-                {{if .Connected}}
-                <span class="badge bg-success">Connected</span>
-                {{else}}
-                <span class="badge bg-danger">Unreachable</span>
-                {{end}}
-              </td>
+          <tr>
+            <td class="text-muted" style="width:140px">Server</td>
+            <td class="font-monospace small">{{.Config.URL}}</td>
           </tr>
+          <tr>
+            <td class="text-muted">Company ID</td>
+            <td>{{.Config.CompanyID}}</td>
+          </tr>
+          <tr>
+            <td class="text-muted">Server reachable</td>
+            <td>
+              {{if .Connected}}
+              <span class="badge bg-success">Yes</span>
+              {{else}}
+              <span class="badge bg-danger">No</span>
+              {{end}}
+            </td>
+          </tr>
+          {{if .Registration}}
+          <tr>
+            <td class="text-muted">Device UUID</td>
+            <td class="font-monospace small text-muted">{{.Registration.DeviceUUID}}</td>
+          </tr>
+          <tr>
+            <td class="text-muted">Sync status</td>
+            <td>
+              {{if eq .Registration.Status "approved"}}
+                <span class="badge bg-success">Approved</span>
+              {{else if eq .Registration.Status "blocked"}}
+                <span class="badge bg-danger">Blocked</span>
+              {{else}}
+                <span class="badge bg-warning text-dark">Pending approval</span>
+              {{end}}
+            </td>
+          </tr>
+          {{end}}
         </tbody>
       </table>
     </div>
   </div>
   {{end}}
 
+  <!-- ── Offline sync status ── -->
+  <div class="card shadow-sm mt-4" id="syncStatusCard" style="display:none">
+    <div class="card-header d-flex align-items-center justify-content-between fw-semibold">
+      <span>Sync Status</span>
+      <span id="onlineBadge" class="badge bg-secondary">Checking…</span>
+    </div>
+    <div class="card-body">
+      <p class="text-muted small mb-3">
+        All data is saved locally first. When connectivity is unavailable the agent keeps
+        collecting; everything in the queue is uploaded automatically when the server is reachable again.
+      </p>
+      <table class="table table-sm mb-2">
+        <tbody>
+          <tr>
+            <td class="text-muted" style="width:160px">Last synced</td>
+            <td id="lastSyncCell">—</td>
+          </tr>
+          <tr>
+            <td class="text-muted">Pending screenshots</td>
+            <td><span id="pendingScreenshots">—</span></td>
+          </tr>
+          <tr>
+            <td class="text-muted">Pending attendance</td>
+            <td><span id="pendingTimeEntries">—</span></td>
+          </tr>
+          <tr>
+            <td class="text-muted">Pending activity days</td>
+            <td><span id="pendingSummaries">—</span></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="text-muted small" id="syncRefreshNote">Refreshes every 30 seconds.</div>
+    </div>
+  </div>
+
+  <!-- ── Screenshot interval settings ── -->
+  <div class="card shadow-sm mt-4">
+    <div class="card-header fw-semibold">Screenshot Capture Settings</div>
+    <div class="card-body">
+      <p class="text-muted small mb-3">
+        Set how often screenshots are captured while you're clocked in.
+        Changes take effect at the start of the next capture cycle.
+      </p>
+      <div class="row align-items-end g-3">
+        <div class="col-auto">
+          <label class="form-label fw-semibold mb-1">Capture interval</label>
+          <select id="intervalSelect" class="form-select" style="width:auto">
+            <option value="1">Every 1 minute</option>
+            <option value="3" selected>Every 3 minutes</option>
+            <option value="6">Every 6 minutes</option>
+            <option value="15">Every 15 minutes</option>
+            <option value="custom">Custom…</option>
+          </select>
+        </div>
+        <div class="col-auto" id="customWrap" style="display:none">
+          <label class="form-label fw-semibold mb-1">Minutes</label>
+          <input type="number" id="customInput" class="form-control" min="1" max="120"
+                 placeholder="e.g. 10" style="width:100px"/>
+        </div>
+        <div class="col-auto">
+          <button id="saveInterval" class="btn btn-primary">Save</button>
+        </div>
+        <div class="col-auto">
+          <span id="intervalMsg" class="small"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </div>
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+// ── Sync status widget ────────────────────────────────────────────
+(function () {
+  function loadSyncStatus() {
+    fetch('/api/sync/status')
+      .then(r => r.json())
+      .then(d => {
+        if (!d.configured) return;
+
+        document.getElementById('syncStatusCard').style.display = '';
+
+        const badge = document.getElementById('onlineBadge');
+        if (d.online) {
+          badge.textContent = 'Online';
+          badge.className = 'badge bg-success';
+        } else {
+          badge.textContent = 'Offline — queuing locally';
+          badge.className = 'badge bg-warning text-dark';
+        }
+
+        const cell = document.getElementById('lastSyncCell');
+        if (d.last_sync) {
+          const dt = new Date(d.last_sync);
+          cell.textContent = dt.toLocaleString();
+        } else {
+          cell.textContent = 'Not yet synced';
+        }
+
+        const p = d.pending || {};
+        document.getElementById('pendingScreenshots').textContent = p.screenshots ?? 0;
+        document.getElementById('pendingTimeEntries').textContent = p.time_entries ?? 0;
+        document.getElementById('pendingSummaries').textContent   = p.summaries   ?? 0;
+      })
+      .catch(() => {});
+  }
+
+  loadSyncStatus();
+  setInterval(loadSyncStatus, 30000);
+})();
+
+// ── Screenshot interval settings ─────────────────────────────────
+(function () {
+  const sel    = document.getElementById('intervalSelect');
+  const wrap   = document.getElementById('customWrap');
+  const custom = document.getElementById('customInput');
+  const btn    = document.getElementById('saveInterval');
+  const msg    = document.getElementById('intervalMsg');
+
+  // Load current setting
+  fetch('/api/settings/screenshot-interval')
+    .then(r => r.json())
+    .then(d => {
+      const v = d.interval_min;
+      const known = ['1','3','6','15'];
+      if (known.includes(String(v))) {
+        sel.value = String(v);
+      } else {
+        sel.value = 'custom';
+        custom.value = v;
+        wrap.style.display = '';
+      }
+    });
+
+  sel.addEventListener('change', () => {
+    wrap.style.display = sel.value === 'custom' ? '' : 'none';
+  });
+
+  btn.addEventListener('click', () => {
+    const min = sel.value === 'custom' ? parseInt(custom.value) : parseInt(sel.value);
+    if (!min || min < 1 || min > 120) {
+      msg.textContent = 'Enter a value between 1 and 120 minutes.';
+      msg.className = 'small text-danger';
+      return;
+    }
+    fetch('/api/settings/screenshot-interval', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({interval_min: min})
+    })
+      .then(r => r.json())
+      .then(d => {
+        if (d.ok) {
+          msg.textContent = `Saved — capturing every ${min} minute${min > 1 ? 's' : ''}.`;
+          msg.className = 'small text-success';
+        } else {
+          msg.textContent = d.error || 'Save failed.';
+          msg.className = 'small text-danger';
+        }
+      })
+      .catch(() => {
+        msg.textContent = 'Request failed.';
+        msg.className = 'small text-danger';
+      });
+  });
+})(); // end screenshot interval IIFE
+
+function checkApprovalStatus() {
+  const btn = document.getElementById('checkStatusBtn');
+  if (!btn) return;
+  btn.disabled = true;
+  btn.textContent = 'Checking...';
+  fetch('/api/device/check-status', { method: 'POST' })
+    .then(r => r.json())
+    .then(d => {
+      if (d.status === 'approved') {
+        location.reload();
+      } else if (d.status === 'blocked') {
+        btn.textContent = 'Blocked';
+        btn.className = 'btn btn-sm btn-outline-danger ms-3';
+        btn.disabled = false;
+      } else {
+        btn.textContent = 'Still pending — try again';
+        btn.disabled = false;
+      }
+    })
+    .catch(() => {
+      btn.textContent = 'Error — retry';
+      btn.disabled = false;
+    });
+}
+</script>
 </body>
 </html>
