@@ -22,7 +22,7 @@ var appBinary []byte
 
 const (
 	appName  = "MyMonitor"
-	port     = 8080
+	port     = 8090
 	regPath  = `HKCU:\Software\Microsoft\Windows\CurrentVersion\Run`
 	regValue = "MyMonitor"
 )

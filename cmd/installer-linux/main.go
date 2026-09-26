@@ -25,7 +25,7 @@ const (
 	binLinkDir  = ".local/bin"
 	serviceDir  = ".config/systemd/user"
 	serviceName = "my-monitor"
-	port        = 8080
+	port        = 8090
 )
 
 func main() {

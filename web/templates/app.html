@@ -1,0 +1,426 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hajir Tracker</title>
+<link rel="icon" href="/app/logo.svg">
+<style>
+:root{--brand:#22408B;--brand-dark:#1B3371;--brand-darker:#25265E;--brand-tint:rgba(34,64,139,.08);--ink:#101828;--ink-2:#475467;--mute:#667085;--line:#E4E7EC;--soft:#F2F4F7;--head:#EEF0F4;--page:#FFFFFF;--amber:#DC6803;--amber-band:#FDEBC8;--danger:#D92D20;--ok:#12B76A}
+*{box-sizing:border-box;margin:0}
+html,body{height:100%}
+body{font-family:Inter,"SF Pro Text",-apple-system,"Segoe UI",Roboto,system-ui,sans-serif;color:var(--ink);background:var(--page);-webkit-font-smoothing:antialiased;font-size:14px;overflow:hidden}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;border:0;background:none}
+.app{display:flex;flex-direction:column;height:100vh;max-width:460px;margin:0 auto}
+.hdr{position:relative;z-index:1;height:104px;flex-shrink:0;display:flex;align-items:center;justify-content:space-between;padding:0 20px;background:var(--head);transition:background .25s}
+.hdr.on{background:var(--brand)}
+.hdr.idle{background:var(--amber-band);height:96px}
+.hdr-clock{display:none;position:absolute;left:50%;bottom:-44px;transform:translateX(-50%);width:88px;height:88px;border-radius:50%;background:var(--page);align-items:center;justify-content:center;box-shadow:0 2px 10px rgba(16,24,40,.10);color:var(--ink)}
+.hdr.idle .hdr-clock{display:flex}
+.hdr.idle .logo{visibility:hidden}
+main.idle{padding-top:64px}
+.hdr .logo{height:34px;display:block;margin:0 auto}
+.hdr.on .logo{filter:brightness(0) invert(1)}
+.hdr-btn{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--ink-2);transition:background .15s}
+.hdr-btn:hover{background:rgba(16,24,40,.06)}
+.hdr.on .hdr-btn{color:#fff}.hdr.on .hdr-btn:hover{background:rgba(255,255,255,.12)}
+.hdr-btn.ghost{visibility:hidden}
+main{flex:1;overflow-y:auto;display:flex;flex-direction:column;padding:28px 24px 20px}
+.view{display:none;flex:1;flex-direction:column}
+.view.show{display:flex}
+label.lbl{display:flex;justify-content:space-between;align-items:center;font-weight:600;font-size:14px;margin:0 0 8px}
+.field{position:relative;margin-bottom:20px}
+.inp{width:100%;height:46px;border:1px solid var(--line);border-radius:8px;padding:0 14px;background:#fff;outline:none;transition:border-color .15s,box-shadow .15s}
+.inp:focus{border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-tint)}
+.eye{position:absolute;right:6px;top:5px;width:36px;height:36px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--mute)}
+.check{display:flex;align-items:center;gap:10px;margin:2px 0 26px;cursor:pointer;user-select:none;color:var(--ink-2)}
+.check input{width:18px;height:18px;accent-color:var(--brand);margin:0}
+.btn{height:48px;border-radius:8px;font-weight:600;font-size:15px;display:inline-flex;align-items:center;justify-content:center;gap:10px;transition:background .15s,transform .05s}
+.btn:active{transform:scale(.98)}
+.btn:disabled{opacity:.6;cursor:not-allowed}
+.btn-primary{width:100%;background:var(--brand);color:#fff}
+.btn-primary:hover{background:var(--brand-dark)}
+.err{display:none;margin:-8px 0 16px;padding:10px 12px;border-radius:8px;background:#FEF3F2;color:var(--danger);font-size:13px}
+.err.show{display:block}
+.foot{margin-top:auto;display:flex;justify-content:space-between;align-items:center;padding-top:20px;font-size:12px;color:var(--mute)}
+.foot a,.link{color:var(--brand);text-decoration:none;font-weight:500;font-size:13px}
+.foot a:hover,.link:hover{text-decoration:underline}
+.center{display:flex;flex-direction:column;align-items:center;text-align:center}
+.pill-date{display:inline-block;padding:6px 16px;border-radius:999px;background:var(--soft);color:var(--ink-2);font-size:14px}
+.timer{font-size:48px;font-weight:500;letter-spacing:.5px;margin:10px 0 4px;font-variant-numeric:tabular-nums}
+.sub{font-size:13px;color:var(--mute);min-height:18px}
+.act{margin-top:26px;display:flex;flex-direction:column;align-items:center;gap:12px}
+.auto-note{margin-top:22px;display:flex;align-items:center;gap:8px;max-width:260px;padding:10px 14px;border-radius:10px;background:var(--brand-tint);color:var(--ink-2);font-size:12.5px;line-height:1.4;text-align:left}
+.auto-note svg{flex:none;color:var(--brand)}
+.pill{height:52px;padding:0 26px 0 12px;border-radius:999px;display:inline-flex;align-items:center;gap:12px;font-weight:600;font-size:16px;background:var(--soft);color:var(--ink);transition:background .15s}
+.pill:hover{background:#E8EBF0}
+.pill .dot{width:30px;height:30px;border-radius:50%;background:#fff;display:flex;align-items:center;justify-content:center;color:var(--ink)}
+.pill.stop{background:var(--brand);color:#fff}.pill.stop:hover{background:var(--brand-dark)}
+.pill.stop .dot{color:var(--brand)}
+.pill.sm{height:44px;padding:0 22px;font-size:15px;font-weight:500}
+.pill.brk-on{background:#FEF0C7;color:#93370D}
+.card{margin-top:auto;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 3px rgba(16,24,40,.06)}
+.card-body{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;gap:12px}
+.hello{font-size:16px}.hello b{font-weight:600}
+.company{font-size:13px;color:var(--ink-2);margin-top:2px}
+.avatar{width:44px;height:44px;border-radius:50%;background:var(--brand-tint);color:var(--brand);display:flex;align-items:center;justify-content:center;font-weight:600;flex-shrink:0}
+.card-foot{border-top:1px solid var(--line);padding:10px 18px;display:flex;justify-content:space-between;font-size:12px;color:var(--mute)}
+.badge-live{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--mute)}
+.badge-live i{width:7px;height:7px;border-radius:50%;background:var(--ok)}
+.badge-live.off i{background:#98A2B3}
+.last{color:var(--ink-2);font-size:15px}
+.bigtime{font-size:42px;font-weight:500;margin:4px 0 2px;font-variant-numeric:tabular-nums}
+.idlefor{color:var(--amber);font-weight:600;display:flex;align-items:center;gap:6px;justify-content:center}
+.resume{font-size:18px;font-weight:600;color:var(--ink-2);margin:26px 0 22px}
+select.inp{appearance:none;background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%23475467' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E") no-repeat right 14px center;padding-right:40px}
+textarea.inp{height:70px;padding:10px 14px;resize:none}
+.companies button{width:100%;text-align:left;padding:14px;border:1px solid var(--line);border-radius:8px;margin-bottom:10px;font-weight:500}
+.companies button:hover{border-color:var(--brand);background:var(--brand-tint)}
+.perm{display:none;margin:0 0 16px;padding:12px 14px;border-radius:10px;background:#FFFAEB;border:1px solid #FEDF89;color:#93370D;font-size:13px;line-height:1.45}
+.perm.show{display:block}
+.perm button{margin-top:8px;height:32px;padding:0 12px;border-radius:6px;background:#DC6803;color:#fff;font-weight:600;font-size:13px}
+.shot{border-top:1px solid var(--line);padding:9px 18px;font-size:12px;color:var(--mute);display:none}
+.shot.show{display:block}
+.shot.err{color:#B42318}
+.toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%) translateY(20px);opacity:0;background:var(--ink);color:#fff;padding:10px 16px;border-radius:8px;font-size:13px;transition:.2s;pointer-events:none;max-width:90%}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.spin{width:18px;height:18px;border-radius:50%;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;animation:s .7s linear infinite}
+@keyframes s{to{transform:rotate(360deg)}}
+@media (prefers-color-scheme:dark){:root{--link:#8AA6EE;--ink:#F2F4F7;--ink-2:#D0D5DD;--mute:#98A2B3;--line:#344054;--soft:#1D2939;--head:#1D2939;--page:#101828;--brand-tint:rgba(138,166,238,.14);--amber-band:#4E3510}.inp,select.inp{background-color:#101828}.pill:hover{background:#26334A}.pill .dot{background:#344054;color:#fff}.pill.stop .dot{background:#fff}.hdr:not(.on):not(.idle) .logo{filter:brightness(0) invert(.92)}.pill.brk-on{background:#4E3510;color:#FEC84B}.foot a,.link{color:var(--link)}.avatar{color:var(--link)}.inp:focus{border-color:var(--link)}}
+/* compact popover layout */
+body{font-size:13px}
+.hdr{height:56px;padding:0 12px}.hdr.idle{height:56px}
+.hdr img,.hdr svg.logo{max-height:26px}
+#btnDash{visibility:hidden;pointer-events:none}
+main{padding:18px 16px 14px}
+.pill-date{padding:3px 12px;font-size:12px}
+.timer{font-size:34px;margin:8px 0 2px}
+.sub{font-size:12px}
+.act{margin-top:16px;gap:8px}
+.pill{height:40px;padding:0 20px 0 6px;gap:10px;font-size:14px}
+.pill .dot{width:28px;height:28px}
+.pill.sm{height:34px;padding:0 16px;font-size:13px}
+.pill.sm svg{width:16px;height:16px}
+.card{border-radius:10px}
+.card-body{padding:10px 12px}
+.hello{font-size:14px}.company{font-size:12px}
+.avatar{width:32px!important;height:32px!important;font-size:12px!important}
+.card-foot{padding:7px 12px;font-size:11px}
+.inp{height:40px}.btn{height:42px;font-size:14px}
+.bigtime{font-size:32px}.resume{font-size:15px;margin:16px 0 14px}
+.choice{display:block;width:100%;text-align:left;border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px;transition:border-color .15s,background .15s}
+.choice:hover{border-color:var(--brand);background:var(--soft)}
+.choice-t{display:block;font-weight:600;font-size:15px;margin-bottom:4px}
+.choice-d{display:block;font-size:12px;color:var(--mute);line-height:1.45}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="hdr" id="hdr">
+    <button class="hdr-btn ghost" id="btnDash" title="Open full time tracker" aria-label="Open full time tracker">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="m3.3 7 8.7 5 8.7-5M12 22V12"/></svg>
+    </button>
+    <img class="logo" src="/app/logo.svg" alt="Hajir">
+    <div class="hdr-clock" aria-hidden="true"><svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5" stroke-dasharray="2 2.6"/><path d="M12 7v5l3 2"/></svg></div>
+    <button class="hdr-btn ghost" id="btnOut" title="Sign out" aria-label="Sign out">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
+    </button>
+  </header>
+
+  <main id="main">
+    <section class="view" id="vSetup">
+      <p style="font-weight:600;font-size:16px;margin:8px 0 4px">Set up this computer</p>
+      <p class="sub" style="margin-bottom:20px">Choose how this device will be tracked. You only do this once.</p>
+      <button type="button" class="choice" id="chManual">
+        <span class="choice-t">Manual</span>
+        <span class="choice-d">The person signs in and starts &amp; stops tracking themselves. A Hajir icon stays in the menu bar.</span>
+      </button>
+      <button type="button" class="choice" id="chAuto">
+        <span class="choice-t">Automatic (managed)</span>
+        <span class="choice-d">Company device. Connects with a device token and tracks in the background — no sign in and no menu-bar icon.</span>
+      </button>
+      <div class="foot"><span id="verSetup">Version</span><a href="#" id="lnkQuitS">Quit</a></div>
+    </section>
+
+    <section class="view" id="vToken">
+      <p style="font-weight:600;font-size:16px;margin:8px 0 4px">Automatic setup</p>
+      <p class="sub" style="margin-bottom:16px">Paste the device token from your Hajir dashboard (Connect a device).</p>
+      <form id="fToken">
+        <label class="lbl" for="devtok">Device token</label>
+        <div class="field"><input class="inp" id="devtok" placeholder="hdv_…" autocomplete="off" spellcheck="false" required></div>
+        <div class="err" id="tokErr"></div>
+        <button class="btn btn-primary" id="btnConnect" type="submit">Connect</button>
+      </form>
+      <div class="foot"><a href="#" id="lnkBackSetup">Back</a><a href="#" id="lnkQuitT">Quit</a></div>
+    </section>
+
+    <section class="view" id="vLogin">
+      <form id="fLogin" autocomplete="on">
+        <label class="lbl" for="login">Email or Phone</label>
+        <div class="field"><input class="inp" id="login" name="username" autocomplete="username" placeholder="email@domain.com" required></div>
+        <label class="lbl" for="pw">Password</label>
+        <div class="field">
+          <input class="inp" id="pw" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required style="padding-right:46px">
+          <button type="button" class="eye" id="eye" aria-label="Show password">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+        <label class="check"><input type="checkbox" id="remember" checked> Remember me</label>
+        <div class="err" id="loginErr"></div>
+        <button class="btn btn-primary" id="btnSignIn" type="submit">Sign In</button>
+      </form>
+      <div class="foot"><span id="verLogin">Version</span><a href="#" id="lnkQuit2">Quit</a></div>
+    </section>
+
+    <section class="view" id="vCompany">
+      <p style="font-weight:600;font-size:16px;margin-bottom:6px">Choose company</p>
+      <p class="sub" style="margin-bottom:18px">Your account belongs to more than one company.</p>
+      <div class="companies" id="companyList"></div>
+      <div class="foot"><a href="#" id="lnkBack">Back to sign in</a><span></span></div>
+    </section>
+
+    <section class="view" id="vTrack">
+      <div class="perm" id="perm">
+        <b>Screenshots are off.</b> Allow <b>MyMonitor</b> in System Settings → Privacy &amp; Security → Screen Recording, then quit and reopen the app.
+        <div><button type="button" id="btnPerm">Open Settings</button></div>
+      </div>
+      <div class="center" style="margin-top:22px">
+        <span class="pill-date" id="date">—</span>
+        <div class="timer" id="timer">00: 00: 00</div>
+        <div class="sub" id="trackSub"></div>
+        <div class="act">
+          <button class="pill" id="btnToggle"><span class="dot" id="toggleIco"></span><span id="toggleTxt">Start Tracking</span></button>
+          <button class="pill sm" id="btnBreak">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v2M14 2v2M6 2v2M17 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/></svg>
+            <span id="breakTxt">Break</span>
+          </button>
+        </div>
+        <div class="auto-note" id="autoNote" style="display:none">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+          <span>Automatic tracking is on — managed by your workspace.</span>
+        </div>
+      </div>
+      <div class="card" style="margin-top:auto">
+        <div class="card-body">
+          <div style="min-width:0">
+            <p class="hello">Hello, <b id="uName">—</b></p>
+            <p class="company" id="uCompany">—</p>
+          </div>
+          <div class="avatar" id="uAvatar">?</div>
+        </div>
+        <div class="shot" id="shotStatus"></div>
+        <div class="card-foot"><span id="verTrack">version</span><span class="badge-live" id="live"><i></i><span>Synced</span></span><a href="#" class="link" id="lnkQuit" style="font-size:12px">Quit</a></div>
+      </div>
+    </section>
+
+    <section class="view" id="vIdle">
+      <div class="center">
+        <p class="last">last active at</p>
+        <p class="bigtime" id="idleAt">—</p>
+        <p class="idlefor">Idle for
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+          <span id="idleFor">—</span></p>
+        <p class="resume">Let’s resume!</p>
+      </div>
+      <label class="lbl" for="reason">Reason for idle</label>
+      <div class="field">
+        <select class="inp" id="reason">
+          <option>In a meeting</option>
+          <option>On a call</option>
+          <option>Offline work</option>
+          <option>Personal break</option>
+          <option>Technical issue</option>
+          <option>Other</option>
+        </select>
+      </div>
+      <div class="field" id="noteWrap" style="display:none"><textarea class="inp" id="note" placeholder="Add a short note" maxlength="255"></textarea></div>
+      <button class="btn btn-primary" id="btnResume">Submit &amp; resume</button>
+    </section>
+  </main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const PLAY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z"/></svg>';
+  const PAUSE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>';
+  let S = null, fetchedAt = 0, view = null, busy = false, pendingLogin = null;
+
+  const api = async (path, body) => {
+    const r = await fetch('/app/api/' + path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Hajir-Client': '1' }, body: JSON.stringify(body) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(j.error || 'Something went wrong'); e.status = r.status; e.data = j; throw e; }
+    return j;
+  };
+  const toast = (m) => { const t = $('toast'); t.textContent = m; t.classList.add('show'); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2600); };
+  const show = (v) => {
+    if (view === v) return;
+    view = v;
+    document.querySelectorAll('.view').forEach((el) => el.classList.toggle('show', el.id === v));
+    const inApp = v === 'vTrack' || v === 'vIdle';
+    $('btnDash').classList.toggle('ghost', !inApp);
+    $('btnOut').classList.toggle('ghost', !inApp);
+  };
+  const pad = (n) => String(n).padStart(2, '0');
+  const hms = (s) => { s = Math.max(0, Math.floor(s)); return `${pad(Math.floor(s / 3600))}: ${pad(Math.floor((s % 3600) / 60))}: ${pad(s % 60)}`; };
+  const human = (s) => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60); return h ? `${h} hr ${m} min` : `${Math.max(1, m)} min`; };
+  const initials = (n) => (n || '?').split(' ').filter(Boolean).slice(0, 2).map((p) => p[0]).join('').toUpperCase();
+  const setBusy = (btn, on, label) => { btn.disabled = on; if (on) { btn.dataset.l = btn.innerHTML; btn.innerHTML = '<span class="spin"></span>'; } else if (btn.dataset.l) { btn.innerHTML = label || btn.dataset.l; } };
+
+  function render() {
+    if (!S) return;
+    $('verLogin').textContent = $('verTrack').textContent = 'Version ' + S.version;
+    const vs = $('verSetup'); if (vs) vs.textContent = 'Version ' + S.version;
+    const hdr = $('hdr');
+    if (!S.signed_in) {
+      hdr.className = 'hdr';
+      $('main').className = '';
+      // First run: offer Manual vs Automatic once. Stay on whichever setup
+      // screen the person navigated to.
+      if (!['vSetup', 'vLogin', 'vCompany', 'vToken'].includes(view)) {
+        $('login').value = S.login || '';
+        $('remember').checked = S.remember !== false;
+        show('vSetup');
+      }
+      return;
+    }
+    if (S.idle && S.clocked_in) {
+      hdr.className = 'hdr idle';
+      $('main').className = 'idle';
+      show('vIdle');
+      $('idleAt').textContent = new Date(S.idle.last_active).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return;
+    }
+    hdr.className = 'hdr' + (S.clocked_in && !S.on_break ? ' on' : '');
+    $('main').className = '';
+    show('vTrack');
+    $('date').textContent = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' });
+    $('uName').textContent = (S.user_name || '').split(' ')[0] || '—';
+    $('uCompany').textContent = S.company_name || '';
+    $('uAvatar').textContent = initials(S.user_name);
+    const tBtn = $('btnToggle');
+    const b = $('btnBreak');
+    if (S.auto_mode) {
+      // Employer-managed automatic tracking: no manual start/stop.
+      tBtn.style.display = 'none';
+      b.style.display = 'none';
+      $('autoNote').style.display = 'flex';
+    } else {
+      $('autoNote').style.display = 'none';
+      tBtn.style.display = '';
+      tBtn.classList.toggle('stop', S.clocked_in);
+      $('toggleIco').innerHTML = S.clocked_in ? PAUSE : PLAY;
+      $('toggleTxt').textContent = S.clocked_in ? 'Stop Tracking' : 'Start Tracking';
+      b.style.display = S.clocked_in ? '' : 'none';
+    }
+    b.classList.toggle('brk-on', S.on_break);
+    $('breakTxt').textContent = S.on_break ? 'End Break' : 'Break';
+    const cap = S.capture || {};
+    const recentOk = cap.last_success && (!cap.last_error_at || new Date(cap.last_success) > new Date(cap.last_error_at));
+    $('perm').classList.toggle('show', S.screen_permission === 'denied' && !recentOk);
+    const shot = $('shotStatus');
+    if (cap.last_error && !recentOk && S.clocked_in) {
+      shot.className = 'shot show err';
+      shot.textContent = 'Screenshot problem: ' + cap.last_error;
+    } else if (cap.last_success && S.clocked_in) {
+      const mins = Math.max(0, Math.round((Date.now() - new Date(cap.last_success)) / 60000));
+      shot.className = 'shot';
+    } else {
+      shot.className = 'shot';
+    }
+  }
+
+  function tick() {
+    if (!S) return;
+    const el = (Date.now() - fetchedAt) / 1000;
+    if (view === 'vTrack') {
+      const total = S.today_seconds + (S.clocked_in ? el : 0);
+      $('timer').textContent = hms(total);
+      if (S.on_break) $('trackSub').textContent = 'On break · ' + human(S.break_seconds + el) + ' today · screenshots paused';
+      else if (S.clocked_in) $('trackSub').textContent = 'Tracking since ' + new Date(S.current_start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      else $('trackSub').textContent = S.today_seconds ? 'Tracked today' : 'Ready when you are';
+    }
+    if (view === 'vIdle' && S.idle) $('idleFor').textContent = human(S.idle.seconds + (S.idle.returned ? 0 : el));
+  }
+
+  async function refresh() {
+    try { S = await api('state'); fetchedAt = Date.now(); render(); tick(); $('live').className = 'badge-live'; $('live').lastElementChild.textContent = 'Synced'; }
+    catch (e) { $('live').className = 'badge-live off'; $('live').lastElementChild.textContent = 'Offline'; }
+  }
+
+  async function doLogin(companyId) {
+    const btn = $('btnSignIn'), err = $('loginErr');
+    err.classList.remove('show');
+    setBusy(btn, true);
+    try {
+      await api('login', { login: $('login').value.trim(), password: $('pw').value, remember: $('remember').checked, company_id: companyId || 0 });
+      $('pw').value = ''; pendingLogin = null; view = null;
+      await refresh();
+    } catch (e) {
+      if (e.status === 409 && e.data.companies) {
+        pendingLogin = true;
+        $('companyList').innerHTML = '';
+        e.data.companies.forEach((c) => { const b = document.createElement('button'); b.textContent = c.name; b.onclick = () => { show('vLogin'); doLogin(c.id); }; $('companyList').appendChild(b); });
+        show('vCompany');
+      } else { err.textContent = e.message; err.classList.add('show'); show('vLogin'); }
+    } finally { setBusy(btn, false, 'Sign In'); }
+  }
+
+  const action = (path, body) => async () => {
+    if (busy) return; busy = true;
+    try { await api(path, body ? body() : {}); await refresh(); } catch (e) { toast(e.message); } finally { busy = false; }
+  };
+
+  $('fLogin').addEventListener('submit', (e) => { e.preventDefault(); doLogin(0); });
+  $('eye').onclick = () => { const p = $('pw'); p.type = p.type === 'password' ? 'text' : 'password'; };
+  $('btnToggle').onclick = async () => { if (busy || !S) return; await action(S.clocked_in ? 'stop' : 'start')(); };
+  $('btnBreak').onclick = action('break');
+  $('btnResume').onclick = action('idle', () => ({ reason: $('reason').value, note: $('note').value }));
+  $('reason').onchange = () => { $('noteWrap').style.display = $('reason').value === 'Other' ? '' : 'none'; };
+  $('btnOut').onclick = async () => {
+    if (S && S.clocked_in && !confirm('You are tracking time. Sign out and stop tracking?')) return;
+    await action('logout')(); view = null; render();
+  };
+  $('btnDash').onclick = () => window.open('/time', '_blank');
+  $('lnkBack').onclick = (e) => { e.preventDefault(); show('vLogin'); };
+  $('chManual').onclick = () => { $('login').value = (S && S.login) || ''; show('vLogin'); };
+  $('chAuto').onclick = () => { show('vToken'); };
+  $('lnkBackSetup').onclick = (e) => { e.preventDefault(); show('vSetup'); };
+  $('fToken').onsubmit = async (e) => {
+    e.preventDefault();
+    const err = $('tokErr'); err.classList.remove('show');
+    const tok = $('devtok').value.trim();
+    if (!tok) return;
+    const btn = $('btnConnect'); setBusy(btn, true);
+    try {
+      await api('provision', { token: tok });
+      toast('Connected. Tracking automatically.');
+      await refresh();
+    } catch (ex) {
+      err.textContent = ex.message || 'Could not connect.'; err.classList.add('show');
+    } finally { setBusy(btn, false, 'Connect'); }
+  };
+
+  const quit = async (e) => {
+    e.preventDefault();
+    if (S && S.clocked_in && !confirm('Quit Hajir Tracker? Your tracking will stop.')) return;
+    try { await api('quit', {}); } catch (err) {}
+    document.body.innerHTML = '<div style="display:flex;height:100vh;align-items:center;justify-content:center;font:15px Inter,system-ui,sans-serif;color:#667085">Hajir Tracker has quit. You can close this window.</div>';
+    setTimeout(() => window.close(), 400);
+  };
+  $('btnPerm').onclick = () => api('open-permissions', {}).catch(() => {});
+  $('lnkQuit').onclick = quit;
+  $('lnkQuit2').onclick = quit;
+  ['lnkQuitS','lnkQuitT'].forEach((id)=>{ const el=$(id); if(el) el.onclick=quit; });
+
+  window.hajirRefresh = refresh;
+  refresh();
+  setInterval(refresh, 5000);
+  setInterval(tick, 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+})();
+</script>
+</body>
+</html>

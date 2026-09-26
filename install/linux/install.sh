@@ -18,7 +18,7 @@ NC='\033[0m'
 # ── Config ────────────────────────────────────────────────────────
 APP_NAME="my-monitor"
 SERVICE_NAME="my-monitor"
-DEFAULT_PORT=8080
+DEFAULT_PORT=8090
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Resolve from install/linux/ up to the project root
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"

@@ -18,7 +18,7 @@ NC='\033[0m'
 # ── Config ───────────────────────────────────────────────────────
 APP_NAME="my-monitor"
 PLIST_LABEL="com.mymonitor.app"
-DEFAULT_PORT=8080
+DEFAULT_PORT=8090
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PLIST_PATH="$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist"
 

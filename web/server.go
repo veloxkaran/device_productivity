@@ -9,6 +9,7 @@ import (
 	"html/template"
 	"log"
 	"my-monitor/auth"
+	"my-monitor/cloud"
 	"my-monitor/monitor"
 	"my-monitor/storage"
 	"net/http"
@@ -77,7 +78,10 @@ func isSetupComplete() bool {
 
 // ── Routes ────────────────────────────────────────────────────────
 
-func Start(db *storage.DB, addr string) {
+var cloudMgr *cloud.Manager
+
+func Start(db *storage.DB, mgr *cloud.Manager, addr string) {
+	cloudMgr = mgr
 	mux := http.NewServeMux()
 
 	// Static files
@@ -111,6 +115,8 @@ func Start(db *storage.DB, addr string) {
 	mux.HandleFunc("/api/time/status", requireAuth(apiTimeStatusHandler(db)))
 	mux.HandleFunc("/api/time/clockin", requireAuth(apiClockInHandler(db)))
 	mux.HandleFunc("/api/time/clockout", requireAuth(apiClockOutHandler(db)))
+	mux.HandleFunc("/api/time/break/start", requireAuth(apiBreakHandler(db, true)))
+	mux.HandleFunc("/api/time/break/end", requireAuth(apiBreakHandler(db, false)))
 	mux.HandleFunc("/api/time/entries", requireAuth(apiTimeEntriesHandler(db)))
 
 	// Cloud setup
@@ -120,6 +126,7 @@ func Start(db *storage.DB, addr string) {
 	mux.HandleFunc("/", requireAuth(dashboardHandler(db)))
 
 	log.Printf("web: listening on http://localhost%s", addr)
+	NewClient(db, mgr).Register(mux)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Fatalf("web: %v", err)
 	}
@@ -392,6 +399,9 @@ func timePageHandler(w http.ResponseWriter, r *http.Request) {
 // ── API: time status ──────────────────────────────────────────────
 
 type timeStatusResp struct {
+	OnBreak       bool       `json:"onBreak"`
+	BreakStart    string     `json:"breakStart,omitempty"`
+	TodayBreakSec int64      `json:"todayBreakSec"`
 	ClockedIn     bool       `json:"clockedIn"`
 	CurrentEntry  *entryJSON `json:"currentEntry,omitempty"`
 	TodaySec      int64      `json:"todaySec"`
@@ -434,6 +444,11 @@ func apiTimeStatusHandler(db *storage.DB) http.HandlerFunc {
 			ej := toEntryJSON(*current)
 			resp.CurrentEntry = &ej
 		}
+		if b, _ := db.CurrentBreak(uid); b != nil {
+			resp.OnBreak = true
+			resp.BreakStart = b.Start.Format(time.RFC3339)
+		}
+		resp.TodayBreakSec = db.TodayBreakSeconds(uid)
 		writeJSON(w, resp)
 	}
 }
@@ -467,6 +482,10 @@ func apiClockOutHandler(db *storage.DB) http.HandlerFunc {
 			return
 		}
 		uid, _ := getUserID(r)
+		if b, _ := db.CurrentBreak(uid); b != nil {
+			db.EndBreak(uid)
+			monitor.SetOnBreak(false)
+		}
 		entry, err := db.ClockOut(uid)
 		if err != nil {
 			writeJSONError(w, err.Error(), http.StatusConflict)
@@ -692,7 +711,7 @@ var cloudSetupHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Req
 
 	action := r.FormValue("action")
 	if action == "disconnect" {
-		saveCloudConfig(cloudConfig{})
+		cloudMgr.Disconnect()
 		tmpl.ExecuteTemplate(w, "cloud.html", map[string]interface{}{
 			"Config":  cloudConfig{},
 			"Success": "Disconnected from cloud.",
@@ -720,7 +739,7 @@ var cloudSetupHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := saveCloudConfig(newCfg); err != nil {
+	if err := cloudMgr.Apply(cloud.Config{URL: newCfg.URL, SyncToken: newCfg.SyncToken}, true); err != nil {
 		tmpl.ExecuteTemplate(w, "cloud.html", map[string]interface{}{
 			"Config": newCfg,
 			"Error":  "Failed to save config: " + err.Error(),
@@ -750,3 +769,25 @@ func pingCloud(cfg cloudConfig) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
+
+func apiBreakHandler(db *storage.DB, start bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONError(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		uid, _ := getUserID(r)
+		var err error
+		if start {
+			_, err = db.StartBreak(uid)
+		} else {
+			_, err = db.EndBreak(uid)
+		}
+		if err != nil {
+			writeJSONError(w, err.Error(), http.StatusConflict)
+			return
+		}
+		monitor.SetOnBreak(start)
+		writeJSON(w, map[string]interface{}{"ok": true, "onBreak": start})
+	}
+}

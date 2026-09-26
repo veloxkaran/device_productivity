@@ -1,19 +1,55 @@
 package capture
 
 import (
-	"fmt"
+	"errors"
+	"image"
+	"os"
 	"os/exec"
+	"strings"
 )
 
-func takeScreenshot(path string) error {
-	if err := exec.Command("scrot", "--silent", path).Run(); err == nil {
-		return nil
+type linuxTool struct {
+	name string
+	args func(path string) []string
+}
+
+func linuxTools() []linuxTool {
+	wayland := os.Getenv("WAYLAND_DISPLAY") != "" || strings.EqualFold(os.Getenv("XDG_SESSION_TYPE"), "wayland")
+	x11 := []linuxTool{
+		{"scrot", func(p string) []string { return []string{"--silent", "--overwrite", p} }},
+		{"import", func(p string) []string { return []string{"-window", "root", p} }},
+		{"maim", func(p string) []string { return []string{p} }},
 	}
-	if err := exec.Command("import", "-window", "root", path).Run(); err == nil {
-		return nil
+	wl := []linuxTool{
+		{"grim", func(p string) []string { return []string{p} }},
+		{"gnome-screenshot", func(p string) []string { return []string{"-f", p} }},
+		{"spectacle", func(p string) []string { return []string{"-b", "-n", "-o", p} }},
 	}
-	if err := exec.Command("gnome-screenshot", "-f", path).Run(); err == nil {
-		return nil
+	if wayland {
+		return append(wl, x11...)
 	}
-	return fmt.Errorf("no screenshot tool found: install scrot (apt install scrot) or imagemagick")
+	return append(x11, wl...)
+}
+
+func prepare() {}
+
+func grab() (image.Image, error) {
+	var tried []string
+	for _, t := range linuxTools() {
+		if _, err := exec.LookPath(t.name); err != nil {
+			continue
+		}
+		tried = append(tried, t.name)
+		tool := t
+		img, err := grabViaFile(func(path string) error {
+			return exec.Command(tool.name, tool.args(path)...).Run()
+		})
+		if err == nil {
+			return img, nil
+		}
+	}
+	if len(tried) == 0 {
+		return nil, errors.New("no screenshot tool found: install grim (Wayland) or scrot (X11)")
+	}
+	return nil, errors.New("screenshot failed with: " + strings.Join(tried, ", "))
 }
