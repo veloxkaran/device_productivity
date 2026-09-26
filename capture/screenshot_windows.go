@@ -3,8 +3,6 @@ package capture
 import (
 	"fmt"
 	"image"
-	"image/png"
-	"os"
 	"syscall"
 	"unsafe"
 )
@@ -23,12 +21,16 @@ var (
 	procDeleteObject           = modGdi32.NewProc("DeleteObject")
 	procDeleteDC               = modGdi32.NewProc("DeleteDC")
 	procGetDIBits              = modGdi32.NewProc("GetDIBits")
+	procSetProcessDPIAware     = modUser32.NewProc("SetProcessDPIAware")
 )
 
 const (
-	smCxScreen   = 0
-	smCyScreen   = 1
+	smCxScreen   = 78
+	smCyScreen   = 79
+	smXVirtual   = 76
+	smYVirtual   = 77
 	srcCopy      = 0x00CC0020
+	captureBlt   = 0x40000000
 	dibRGBColors = 0
 )
 
@@ -51,36 +53,43 @@ type bitmapInfo struct {
 	bmiColors [1]uint32
 }
 
-func takeScreenshot(path string) error {
+func prepare() {
+	procSetProcessDPIAware.Call()
+}
+
+func grab() (image.Image, error) {
 	w, _, _ := procGetSystemMetrics.Call(smCxScreen)
 	h, _, _ := procGetSystemMetrics.Call(smCyScreen)
+	vx, _, _ := procGetSystemMetrics.Call(smXVirtual)
+	vy, _, _ := procGetSystemMetrics.Call(smYVirtual)
+	originX, originY := int32(vx), int32(vy)
 	width, height := int(w), int(h)
 	if width <= 0 || height <= 0 {
-		return fmt.Errorf("invalid screen size: %dx%d", width, height)
+		return nil, fmt.Errorf("invalid screen size: %dx%d", width, height)
 	}
 
 	screenDC, _, _ := procGetDC.Call(0)
 	if screenDC == 0 {
-		return fmt.Errorf("GetDC failed")
+		return nil, fmt.Errorf("GetDC failed")
 	}
 	defer procReleaseDC.Call(0, screenDC)
 
 	memDC, _, _ := procCreateCompatibleDC.Call(screenDC)
 	if memDC == 0 {
-		return fmt.Errorf("CreateCompatibleDC failed")
+		return nil, fmt.Errorf("CreateCompatibleDC failed")
 	}
 	defer procDeleteDC.Call(memDC)
 
 	hBmp, _, _ := procCreateCompatibleBitmap.Call(screenDC, uintptr(width), uintptr(height))
 	if hBmp == 0 {
-		return fmt.Errorf("CreateCompatibleBitmap failed")
+		return nil, fmt.Errorf("CreateCompatibleBitmap failed")
 	}
 	defer procDeleteObject.Call(hBmp)
 
 	procSelectObject.Call(memDC, hBmp)
-	ret, _, _ := procBitBlt.Call(memDC, 0, 0, uintptr(width), uintptr(height), screenDC, 0, 0, srcCopy)
+	ret, _, _ := procBitBlt.Call(memDC, 0, 0, uintptr(width), uintptr(height), screenDC, uintptr(originX), uintptr(originY), srcCopy|captureBlt)
 	if ret == 0 {
-		return fmt.Errorf("BitBlt failed")
+		return nil, fmt.Errorf("BitBlt failed")
 	}
 
 	bi := bitmapInfo{
@@ -100,7 +109,7 @@ func takeScreenshot(path string) error {
 		dibRGBColors,
 	)
 	if r == 0 {
-		return fmt.Errorf("GetDIBits failed")
+		return nil, fmt.Errorf("GetDIBits failed")
 	}
 
 	// GDI DIB is BGRA; screen DCs have alpha=0 — force 255.
@@ -116,10 +125,5 @@ func takeScreenshot(path string) error {
 		}
 	}
 
-	f, err := os.Create(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return png.Encode(f, img)
+	return img, nil
 }

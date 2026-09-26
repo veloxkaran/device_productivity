@@ -50,7 +50,15 @@ type ActivityLog struct {
 	ID          int64
 	IsActive    bool
 	IdleSeconds int64
+	AppName     string
 	CreatedAt   time.Time
+}
+
+type Break struct {
+	ID      int64
+	UserID  int64
+	Start   time.Time
+	End     *time.Time
 }
 
 func New(path string) (*DB, error) {
@@ -64,7 +72,9 @@ func New(path string) (*DB, error) {
 	if err := initSchema(db); err != nil {
 		return nil, err
 	}
-	return &DB{db: db}, nil
+	d := &DB{db: db}
+	d.migrateExtras()
+	return d, nil
 }
 
 func initSchema(db *sql.DB) error {
@@ -310,16 +320,146 @@ func (d *DB) GetRecentScreenshots(limit int) ([]Screenshot, error) {
 	return list, nil
 }
 
-func (d *DB) SaveActivity(isActive bool, idleSeconds int64) error {
+func (d *DB) SaveActivity(isActive bool, idleSeconds int64, appName string) error {
 	active := 0
 	if isActive {
 		active = 1
 	}
 	_, err := d.db.Exec(
-		"INSERT INTO activity_logs (is_active, idle_seconds, created_at) VALUES (?, ?, ?)",
-		active, idleSeconds, time.Now().Format(time.RFC3339),
+		"INSERT INTO activity_logs (is_active, idle_seconds, app_name, created_at) VALUES (?, ?, ?, ?)",
+		active, idleSeconds, appName, time.Now().Format(time.RFC3339),
 	)
 	return err
+}
+
+func (d *DB) migrateExtras() {
+	d.db.Exec(`ALTER TABLE activity_logs ADD COLUMN app_name TEXT NOT NULL DEFAULT ''`)
+	d.db.Exec(`CREATE TABLE IF NOT EXISTS idle_reports (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		start_at   TEXT NOT NULL,
+		end_at     TEXT NOT NULL,
+		reason     TEXT NOT NULL,
+		note       TEXT NOT NULL DEFAULT '',
+		synced     INTEGER NOT NULL DEFAULT 0
+	)`)
+	d.db.Exec(`CREATE TABLE IF NOT EXISTS breaks (
+		id         INTEGER PRIMARY KEY AUTOINCREMENT,
+		user_id    INTEGER NOT NULL,
+		start_at   TEXT NOT NULL,
+		end_at     TEXT
+	)`)
+}
+
+func (d *DB) CurrentBreak(userID int64) (*Break, error) {
+	var b Break
+	var start string
+	err := d.db.QueryRow(`SELECT id, user_id, start_at FROM breaks WHERE user_id = ? AND end_at IS NULL ORDER BY start_at DESC LIMIT 1`, userID).Scan(&b.ID, &b.UserID, &start)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	b.Start, _ = time.Parse(time.RFC3339, start)
+	return &b, nil
+}
+
+func (d *DB) HasOpenBreak() bool {
+	var n int
+	d.db.QueryRow(`SELECT COUNT(*) FROM breaks WHERE end_at IS NULL`).Scan(&n)
+	return n > 0
+}
+
+func (d *DB) StartBreak(userID int64) (*Break, error) {
+	if cur, _ := d.CurrentBreak(userID); cur != nil {
+		return nil, fmt.Errorf("already on break")
+	}
+	if entry, _ := d.GetCurrentEntry(userID); entry == nil {
+		return nil, fmt.Errorf("clock in before starting a break")
+	}
+	now := time.Now()
+	res, err := d.db.Exec(`INSERT INTO breaks (user_id, start_at) VALUES (?, ?)`, userID, now.Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	id, _ := res.LastInsertId()
+	return &Break{ID: id, UserID: userID, Start: now}, nil
+}
+
+func (d *DB) EndBreak(userID int64) (*Break, error) {
+	cur, err := d.CurrentBreak(userID)
+	if err != nil {
+		return nil, err
+	}
+	if cur == nil {
+		return nil, fmt.Errorf("not on break")
+	}
+	now := time.Now()
+	if _, err := d.db.Exec(`UPDATE breaks SET end_at = ? WHERE id = ?`, now.Format(time.RFC3339), cur.ID); err != nil {
+		return nil, err
+	}
+	cur.End = &now
+	return cur, nil
+}
+
+func (d *DB) TodayBreakSeconds(userID int64) int64 {
+	y, m, dd := time.Now().Date()
+	start := time.Date(y, m, dd, 0, 0, 0, 0, time.Local)
+	rows, err := d.db.Query(`SELECT start_at, end_at FROM breaks WHERE user_id = ? AND (end_at IS NULL OR end_at > ?)`, userID, start.Format(time.RFC3339))
+	if err != nil {
+		return 0
+	}
+	defer rows.Close()
+	var total int64
+	for rows.Next() {
+		var s string
+		var e sql.NullString
+		if rows.Scan(&s, &e) != nil {
+			continue
+		}
+		bs, _ := time.Parse(time.RFC3339, s)
+		be := time.Now()
+		if e.Valid {
+			be, _ = time.Parse(time.RFC3339, e.String)
+		}
+		if bs.Before(start) {
+			bs = start
+		}
+		if be.After(bs) {
+			total += int64(be.Sub(bs).Seconds())
+		}
+	}
+	return total
+}
+
+func (d *DB) GetBreaksSince(since time.Time) ([]Break, error) {
+	q := `SELECT id, user_id, start_at, end_at FROM breaks ORDER BY start_at`
+	var args []any
+	if !since.IsZero() {
+		q = `SELECT id, user_id, start_at, end_at FROM breaks WHERE start_at > ? OR end_at IS NULL OR end_at > ? ORDER BY start_at`
+		args = []any{since.Format(time.RFC3339), since.Format(time.RFC3339)}
+	}
+	rows, err := d.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []Break
+	for rows.Next() {
+		var b Break
+		var s string
+		var e sql.NullString
+		if err := rows.Scan(&b.ID, &b.UserID, &s, &e); err != nil {
+			return nil, err
+		}
+		b.Start, _ = time.Parse(time.RFC3339, s)
+		if e.Valid {
+			t, _ := time.Parse(time.RFC3339, e.String)
+			b.End = &t
+		}
+		list = append(list, b)
+	}
+	return list, rows.Err()
 }
 
 func (d *DB) GetRecentActivity(limit int) ([]ActivityLog, error) {
@@ -419,8 +559,8 @@ func (d *DB) GetTimeEntriesSince(since time.Time) ([]TimeEntry, error) {
 	} else {
 		rs, err = d.db.Query(
 			`SELECT id, user_id, clock_in, clock_out FROM time_entries
-			 WHERE clock_in > ? ORDER BY clock_in`,
-			since.Format(time.RFC3339),
+			 WHERE clock_in > ? OR clock_out IS NULL OR clock_out > ? ORDER BY clock_in`,
+			since.Format(time.RFC3339), since.Format(time.RFC3339),
 		)
 	}
 	if err != nil {
@@ -525,11 +665,11 @@ func (d *DB) GetActivityLogsSince(since time.Time) ([]ActivityLog, error) {
 	var err error
 	if since.IsZero() {
 		rs, err = d.db.Query(
-			`SELECT id, is_active, idle_seconds, created_at FROM activity_logs ORDER BY created_at`,
+			`SELECT id, is_active, idle_seconds, created_at, app_name FROM activity_logs ORDER BY created_at`,
 		)
 	} else {
 		rs, err = d.db.Query(
-			`SELECT id, is_active, idle_seconds, created_at FROM activity_logs
+			`SELECT id, is_active, idle_seconds, created_at, app_name FROM activity_logs
 			 WHERE created_at > ? ORDER BY created_at`,
 			since.Format(time.RFC3339),
 		)
@@ -544,7 +684,7 @@ func (d *DB) GetActivityLogsSince(since time.Time) ([]ActivityLog, error) {
 		var a ActivityLog
 		var active int
 		var ts string
-		if err := rs.Scan(&a.ID, &active, &a.IdleSeconds, &ts); err != nil {
+		if err := rs.Scan(&a.ID, &active, &a.IdleSeconds, &ts, &a.AppName); err != nil {
 			return nil, err
 		}
 		a.IsActive = active == 1
@@ -552,4 +692,54 @@ func (d *DB) GetActivityLogsSince(since time.Time) ([]ActivityLog, error) {
 		list = append(list, a)
 	}
 	return list, rs.Err()
+}
+
+type IdleReport struct {
+	ID     int64
+	Start  time.Time
+	End    time.Time
+	Reason string
+	Note   string
+}
+
+func (d *DB) SaveIdleReport(start, end time.Time, reason, note string) error {
+	_, err := d.db.Exec(`INSERT INTO idle_reports (start_at, end_at, reason, note) VALUES (?,?,?,?)`, start.Format(time.RFC3339), end.Format(time.RFC3339), reason, note)
+	return err
+}
+
+func (d *DB) UnsyncedIdleReports() ([]IdleReport, error) {
+	rows, err := d.db.Query(`SELECT id, start_at, end_at, reason, note FROM idle_reports WHERE synced = 0 ORDER BY id LIMIT 200`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []IdleReport
+	for rows.Next() {
+		var r IdleReport
+		var s, e string
+		if err := rows.Scan(&r.ID, &s, &e, &r.Reason, &r.Note); err != nil {
+			return nil, err
+		}
+		r.Start, _ = time.Parse(time.RFC3339, s)
+		r.End, _ = time.Parse(time.RFC3339, e)
+		list = append(list, r)
+	}
+	return list, rows.Err()
+}
+
+func (d *DB) MarkIdleReportsSynced(ids []int64) error {
+	for _, id := range ids {
+		if _, err := d.db.Exec(`UPDATE idle_reports SET synced = 1 WHERE id = ?`, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *DB) FirstUserID() int64 {
+	var id int64
+	if err := d.db.QueryRow(`SELECT id FROM users ORDER BY id LIMIT 1`).Scan(&id); err != nil {
+		return 1
+	}
+	return id
 }

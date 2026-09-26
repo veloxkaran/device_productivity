@@ -143,9 +143,15 @@
       <div class="mb-1 text-muted small" id="clock-status-label">Not clocked in</div>
       <div class="mb-4 text-muted small" id="clock-since" style="display:none"></div>
 
-      <button id="clock-btn" class="btn btn-clocked-out mb-4" onclick="toggleClock()">
-        Clock In
-      </button>
+      <div class="d-flex justify-content-center gap-2 mb-4">
+        <button id="clock-btn" class="btn btn-clocked-out" onclick="toggleClock()">
+          Clock In
+        </button>
+        <button id="break-btn" class="btn btn-outline-warning" onclick="toggleBreak()" style="display:none;border-radius:999px;padding:.6rem 1.4rem;font-weight:600">
+          Take Break
+        </button>
+      </div>
+      <div class="mb-3 text-muted small" id="break-info" style="display:none"></div>
 
       <!-- Stat pills -->
       <div class="d-flex justify-content-center gap-4 pt-3 border-top">
@@ -270,6 +276,21 @@ async function toggleClock() {
   }
 }
 
+async function toggleBreak() {
+  const btn = document.getElementById('break-btn');
+  btn.disabled = true;
+  try {
+    const r = await fetch(st.onBreak ? '/api/time/break/end' : '/api/time/break/start', { method: 'POST' });
+    const data = await r.json();
+    if (data.error) { showToast(data.error, 'danger'); return; }
+    await refreshStatus();
+  } catch(e) {
+    showToast('Network error: ' + e.message, 'danger');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 // ── Fetch & apply current clock status ────────────────────────────
 async function refreshStatus() {
   try {
@@ -312,6 +333,23 @@ function applyStatus(data) {
     btn.classList.replace('btn-clocked-in', 'btn-clocked-out');
     label.textContent = 'Not clocked in';
     navRec.style.display = 'none';
+  }
+
+  st.onBreak = !!data.onBreak;
+  const breakBtn = document.getElementById('break-btn');
+  const breakInfo = document.getElementById('break-info');
+  breakBtn.style.display = st.clockedIn ? '' : 'none';
+  breakBtn.textContent = st.onBreak ? 'End Break' : 'Take Break';
+  breakBtn.className = st.onBreak ? 'btn btn-warning' : 'btn btn-outline-warning';
+  if (st.onBreak) {
+    label.textContent = 'On break — screenshots paused';
+    breakInfo.textContent = 'Break since ' + fmtTimestamp(data.breakStart);
+    breakInfo.style.display = '';
+  } else if (data.todayBreakSec > 0) {
+    breakInfo.textContent = 'Break today: ' + fmtDuration(data.todayBreakSec);
+    breakInfo.style.display = '';
+  } else {
+    breakInfo.style.display = 'none';
   }
 
   // Stats

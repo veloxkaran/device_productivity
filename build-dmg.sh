@@ -14,9 +14,16 @@ set -euo pipefail
 APP_NAME="MyMonitor"
 DISPLAY_NAME="My Monitor"
 BINARY_NAME="my-monitor"
-VERSION="1.0.0"
-BUNDLE_ID="com.mymonitor.app"
-PORT=8080
+VERSION="2.0.0"
+BUNDLE_ID="com.hajir.tracker"
+SIGN_IDENTITY="${SIGN_IDENTITY:-}"
+if [[ -z "$SIGN_IDENTITY" ]] && security find-identity -v -p codesigning 2>/dev/null | grep -q "Hajir Local Signing"; then
+    SIGN_IDENTITY="Hajir Local Signing"
+fi
+PORT=8090
+HAJIR_API_URL="${HAJIR_API_URL:-http://localhost:8001/api/v2}"
+HUB_URL="${HUB_URL:-http://localhost:4010}"
+LDFLAGS="-s -w -X my-monitor/web.DefaultHajirAPIURL=${HAJIR_API_URL} -X my-monitor/web.DefaultHubURL=${HUB_URL}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/dist"
@@ -53,7 +60,7 @@ if [[ "$BUILD_MODE" == "universal" ]]; then
     # Universal binary requires CGo cross-compile for the non-native arch.
     # clang on Apple Silicon can target x86_64 with -arch flag.
     info "Building arm64..."
-    GOARCH=arm64 GOOS=darwin go build -ldflags="-s -w" -o "${BUILD_DIR}/${BINARY_NAME}-arm64" .
+    GOARCH=arm64 GOOS=darwin go build -ldflags="${LDFLAGS}" -o "${BUILD_DIR}/${BINARY_NAME}-arm64" .
 
     info "Building amd64 (CGo cross-compile via clang -arch x86_64)..."
     CGO_ENABLED=1 \
@@ -61,7 +68,7 @@ if [[ "$BUILD_MODE" == "universal" ]]; then
     CGO_LDFLAGS="-arch x86_64" \
     CC="clang -arch x86_64" \
     GOARCH=amd64 GOOS=darwin \
-    go build -ldflags="-s -w" -o "${BUILD_DIR}/${BINARY_NAME}-amd64" .
+    go build -ldflags="${LDFLAGS}" -o "${BUILD_DIR}/${BINARY_NAME}-amd64" .
 
     lipo -create -output "${BUILD_DIR}/${BINARY_NAME}" \
         "${BUILD_DIR}/${BINARY_NAME}-arm64" \
@@ -69,7 +76,7 @@ if [[ "$BUILD_MODE" == "universal" ]]; then
     rm "${BUILD_DIR}/${BINARY_NAME}-arm64" "${BUILD_DIR}/${BINARY_NAME}-amd64"
     ok "Universal binary: ${BUILD_DIR}/${BINARY_NAME}"
 else
-    GOARCH="$GOARCH" GOOS=darwin go build -ldflags="-s -w" -o "${BUILD_DIR}/${BINARY_NAME}" .
+    GOARCH="$GOARCH" GOOS=darwin go build -ldflags="${LDFLAGS}" -o "${BUILD_DIR}/${BINARY_NAME}" .
     ok "Binary (${GOARCH}): ${BUILD_DIR}/${BINARY_NAME}"
 fi
 
@@ -79,40 +86,13 @@ step "Creating .app bundle"
 mkdir -p "${APP_BUNDLE}/Contents/MacOS"
 mkdir -p "${APP_BUNDLE}/Contents/Resources"
 
-# Main binary
-cp "${BUILD_DIR}/${BINARY_NAME}" "${APP_BUNDLE}/Contents/Resources/${BINARY_NAME}"
-chmod +x "${APP_BUNDLE}/Contents/Resources/${BINARY_NAME}"
-
-# Launcher script — runs binary with data dir in ~/Library/Application Support
-cat > "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}" << 'LAUNCHER'
-#!/bin/bash
-DIR="$(cd "$(dirname "$0")" && pwd)"
-DATA_DIR="$HOME/Library/Application Support/MyMonitor"
-mkdir -p "$DATA_DIR/data/screenshots"
-cd "$DATA_DIR"
-
-# Launch the Go server in background
-"$DIR/../Resources/my-monitor" &
-SERVER_PID=$!
-
-# Wait up to 4s for the server to be ready
-for i in $(seq 1 40); do
-    sleep 0.1
-    if (echo >/dev/tcp/127.0.0.1/8080) 2>/dev/null; then
-        break
-    fi
-done
-
-# Open the setup page (first run) or dashboard
-if [[ ! -f "$DATA_DIR/data/.setup_complete" ]]; then
-    open "http://localhost:8080/setup"
-else
-    open "http://localhost:8080"
-fi
-
-wait "$SERVER_PID"
-LAUNCHER
+# Main executable — the Go binary itself (no shell launcher), so macOS
+# attributes Screen Recording / Accessibility to this exact app.
+cp "${BUILD_DIR}/${BINARY_NAME}" "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
+
+# Menu-bar icon: Hajir stopwatch icon only
+cp web/assets/hajir-menubar.png "${APP_BUNDLE}/Contents/Resources/hajir-menubar.png"
 
 # Info.plist
 cat > "${APP_BUNDLE}/Contents/Info.plist" << PLIST
@@ -131,10 +111,25 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" << PLIST
     <key>CFBundleSignature</key>       <string>????</string>
     <key>LSMinimumSystemVersion</key>  <string>11.0</string>
     <key>LSUIElement</key>             <true/>
+    <key>NSAppTransportSecurity</key>
+    <dict><key>NSAllowsLocalNetworking</key><true/></dict>
+    <key>NSScreenCaptureUsageDescription</key><string>Hajir Tracker takes periodic work screenshots while you are tracking time.</string>
     <key>NSHighResolutionCapable</key> <true/>
 </dict>
 </plist>
 PLIST
+
+# Code signing — a stable identity keeps macOS permissions across rebuilds/updates
+if [[ -n "$SIGN_IDENTITY" ]]; then
+    if [[ "$SIGN_IDENTITY" == Developer\ ID* ]]; then
+        codesign --force --deep --options runtime --timestamp --identifier "${BUNDLE_ID}" --sign "$SIGN_IDENTITY" "${APP_BUNDLE}"
+    else
+        codesign --force --deep --identifier "${BUNDLE_ID}" --sign "$SIGN_IDENTITY" "${APP_BUNDLE}"
+    fi
+    ok "Signed with: $SIGN_IDENTITY"
+else
+    codesign --force --deep --sign - --identifier "${BUNDLE_ID}" "${APP_BUNDLE}" && warn "Ad-hoc signed (no SIGN_IDENTITY). macOS will re-ask for permissions after each rebuild; run 'make dev-cert' once to avoid this."
+fi
 
 ok ".app bundle: ${APP_BUNDLE}"
 
