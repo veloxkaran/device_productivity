@@ -17,13 +17,14 @@ type Broker struct {
 }
 
 type client struct {
-	conn *websocket.Conn
-	send chan []byte
+	conn  *websocket.Conn
+	send  chan []byte
+	scope Scope
 }
 
 func NewBroker() *Broker { return &Broker{rooms: map[int64]map[*client]struct{}{}} }
 
-func (b *Broker) Publish(companyID int64, event string, payload any) {
+func (b *Broker) Publish(companyID, userID int64, event string, payload any) {
 	msg, err := json.Marshal(map[string]any{"event": event, "data": payload})
 	if err != nil {
 		return
@@ -31,6 +32,9 @@ func (b *Broker) Publish(companyID int64, event string, payload any) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for c := range b.rooms[companyID] {
+		if !c.scope.Receives(userID) {
+			continue
+		}
 		select {
 		case c.send <- msg:
 		default:
@@ -58,8 +62,13 @@ func (b *Broker) leave(companyID int64, c *client) {
 
 func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	companyID, _ := strconv.ParseInt(r.URL.Query().Get("company_id"), 10, 64)
-	emp, err := s.verifier.Verify(r.URL.Query().Get("token"))
-	if err != nil || companyID == 0 || !emp.Owns(companyID) {
+	userID, err := s.verifyWSTicket(r.URL.Query().Get("ticket"), companyID, time.Now())
+	if err != nil {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	scope, ok := s.tickets.take(r.URL.Query().Get("ticket"), time.Now())
+	if !ok {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -68,10 +77,10 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return
 	}
-	c := &client{conn: conn, send: make(chan []byte, 64)}
+	c := &client{conn: conn, send: make(chan []byte, 64), scope: scope}
 	done := make(chan struct{})
 	s.broker.join(companyID, c)
-	log.Printf("hub: ws joined company=%d user=%d", companyID, emp.UserID)
+	log.Printf("hub: ws joined company=%d user=%d", companyID, userID)
 
 	go func() {
 		defer func() {

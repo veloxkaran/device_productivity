@@ -46,7 +46,7 @@ func (s *Server) publish(d *Device, kind string) {
 		return
 	}
 	start, end, _ := s.dayBounds("")
-	s.broker.Publish(d.CompanyID, "device-activity-updated", map[string]any{"kind": kind, "summary": s.summary(fresh, start, end)})
+	s.broker.Publish(d.CompanyID, d.UserID, "device-activity-updated", map[string]any{"kind": kind, "summary": s.summary(fresh, start, end)})
 }
 
 func (s *Server) handleDeviceMe(w http.ResponseWriter, r *http.Request, d *Device) {
@@ -304,8 +304,12 @@ func (s *Server) handleDevices(w http.ResponseWriter, r *http.Request, e *Employ
 		writeErr(w, http.StatusInternalServerError, "could not load devices")
 		return
 	}
+	sc := scopeOf(r)
 	list := make([]map[string]any, 0, len(devices))
 	for _, d := range devices {
+		if !sc.Allows(d.UserID) {
+			continue
+		}
 		list = append(list, s.summary(d, start, end))
 	}
 	writeOK(w, "successfully fetched", list)
@@ -370,6 +374,10 @@ func (s *Server) handleTimeEntries(w http.ResponseWriter, r *http.Request, e *Em
 		return
 	}
 	userID, _ := strconv.ParseInt(q.Get("user_id"), 10, 64)
+	if userID > 0 && denyMember(w, r, userID) {
+		return
+	}
+	sc := scopeOf(r)
 	entries, err := s.store.TimeEntries(companyID, userID, nil, start, end)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not load time entries")
@@ -377,6 +385,9 @@ func (s *Server) handleTimeEntries(w http.ResponseWriter, r *http.Request, e *Em
 	}
 	list := make([]map[string]any, 0, len(entries))
 	for _, en := range entries {
+		if !sc.Allows(en.UserID) {
+			continue
+		}
 		dur := time.Since(en.ClockIn)
 		if en.ClockOut != nil {
 			dur = en.ClockOut.Sub(en.ClockIn)
@@ -394,6 +405,9 @@ func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request, e *Emplo
 	userID, _ := strconv.ParseInt(r.URL.Query().Get("user_id"), 10, 64)
 	if userID <= 0 {
 		writeErr(w, http.StatusUnprocessableEntity, "user_id is required")
+		return
+	}
+	if denyMember(w, r, userID) {
 		return
 	}
 	start, end, err := s.dayBounds(r.URL.Query().Get("date"))
@@ -419,6 +433,9 @@ func (s *Server) handleScreenshots(w http.ResponseWriter, r *http.Request, e *Em
 	userID, _ := strconv.ParseInt(r.URL.Query().Get("user_id"), 10, 64)
 	if userID <= 0 {
 		writeErr(w, http.StatusUnprocessableEntity, "user_id is required")
+		return
+	}
+	if denyMember(w, r, userID) {
 		return
 	}
 	start, end, err := s.dayBounds(r.URL.Query().Get("date"))
@@ -616,4 +633,20 @@ func (s *Server) handleInternalModules(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("hub: company %d activity module → %v", companyID, *in.ActivityEnabled)
 	writeOK(w, "module state saved", map[string]any{"company_id": companyID, "activity_enabled": *in.ActivityEnabled})
+}
+
+func (s *Server) handleDeleteScreenshot(w http.ResponseWriter, r *http.Request, e *Employer, companyID int64) {
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	sh, err := s.store.ScreenshotByID(id)
+	if id <= 0 || err != nil || sh.CompanyID != companyID {
+		writeErr(w, http.StatusNotFound, "screenshot not found")
+		return
+	}
+	if err := s.store.DeleteScreenshot(sh.ID); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not delete screenshot")
+		return
+	}
+	s.removeScreenshotFile(sh.Path)
+	s.broker.Publish(companyID, sh.UserID, "device-activity-updated", map[string]any{"kind": "screenshot-deleted", "summary": map[string]any{"user_id": sh.UserID, "screenshot_id": sh.ID}})
+	writeOK(w, "screenshot deleted", map[string]any{"id": sh.ID})
 }

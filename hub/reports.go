@@ -180,8 +180,108 @@ func (s *Server) isOnline(d *Device) bool {
 
 func secs(v float64) int64 { return int64(v) }
 
+var overviewSorts = []string{"name", "status", "shift", "clock_in", "clock_out", "worked_seconds", "last_screenshot"}
+var overviewFilters = []string{"all", "active", "idle", "break", "offline", "late", "absent"}
+
+type overviewRow struct {
+	data     map[string]any
+	userID   int64
+	name     string
+	status   string
+	shift    string
+	clockIn  *time.Time
+	clockOut *time.Time
+	worked   float64
+	lastShot *time.Time
+	late     bool
+	absent   bool
+}
+
+func statusRank(status string) int {
+	switch status {
+	case "active":
+		return 0
+	case "idle":
+		return 1
+	case "break":
+		return 2
+	case "offline":
+		return 3
+	}
+	return 4
+}
+
+func (o overviewRow) matches(filter string) bool {
+	switch filter {
+	case "active", "idle", "break":
+		return o.status == filter
+	case "offline":
+		return statusRank(o.status) >= 3
+	case "late":
+		return o.late
+	case "absent":
+		return o.absent
+	}
+	return true
+}
+
+func sortOverview(rows []overviewRow, key string, desc bool) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		c := 0
+		switch key {
+		case "status":
+			c = statusRank(a.status) - statusRank(b.status)
+		case "shift":
+			c = strings.Compare(a.shift, b.shift)
+		case "clock_in", "clock_out", "last_screenshot":
+			ta, tb := a.clockIn, b.clockIn
+			if key == "clock_out" {
+				ta, tb = a.clockOut, b.clockOut
+			} else if key == "last_screenshot" {
+				ta, tb = a.lastShot, b.lastShot
+			}
+			v, ok := cmpTimePtr(ta, tb)
+			if !ok {
+				return ta != nil
+			}
+			c = v
+		case "worked_seconds":
+			switch {
+			case a.worked < b.worked:
+				c = -1
+			case a.worked > b.worked:
+				c = 1
+			}
+		}
+		if c != 0 {
+			if desc {
+				return c > 0
+			}
+			return c < 0
+		}
+		if n := strings.Compare(strings.ToLower(a.name), strings.ToLower(b.name)); n != 0 {
+			if key == "name" && desc {
+				return n > 0
+			}
+			return n < 0
+		}
+		return a.userID < b.userID
+	})
+}
+
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, e *Employer, companyID int64) {
-	date := r.URL.Query().Get("date")
+	q := r.URL.Query()
+	paged := pagingRequested(q)
+	var pg paging
+	if paged {
+		var err error
+		if pg, err = parsePaging(q, overviewSorts, overviewFilters, "name"); err != nil {
+			writeErr(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+	}
+	date := q.Get("date")
 	start, end, err := s.dayBounds(date)
 	if err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, err.Error())
@@ -194,6 +294,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, e *Emplo
 		writeErr(w, http.StatusInternalServerError, "could not load members")
 		return
 	}
+	members = scopeMembers(scopeOf(r), members)
 	ix, err := s.collect(companyID, 0, start, end)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not compute activity")
@@ -207,7 +308,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, e *Emplo
 
 	workday := s.isWorkday(cfg, start)
 	day := s.dayKey(start)
-	var rows []map[string]any
+	var rows []overviewRow
 	totals := map[string]any{}
 	var active, idle, onBreak, offline, late, absent, workedCount int
 	var workedSum float64
@@ -245,21 +346,30 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, e *Emplo
 			workedSum += st.Working()
 		}
 		var shot any
+		var shotAt *time.Time
 		if sh, ok := lastShot[m.UserID]; ok {
 			shot = map[string]any{"id": sh.ID, "captured_at": isoPtr(&sh.CapturedAt), "url": s.screenshotURL(sh.ID)}
+			t := sh.CapturedAt
+			shotAt = &t
 		}
 		var out any
+		var outAt *time.Time
 		if !st.Open {
 			out = isoPtr(st.LastOut)
+			outAt = st.LastOut
 		}
-		rows = append(rows, map[string]any{
-			"user_id": m.UserID, "employee_name": m.Name, "device_id": m.Device.ID, "device_name": m.Device.Name,
-			"platform": m.Device.Platform, "online": online, "status": status, "is_clocked_in": st.Open,
-			"current_app": m.Device.LastApp, "last_seen_at": isoPtr(m.Device.LastSeenAt),
-			"clock_in": isoPtr(st.FirstIn), "clock_out": out,
-			"tracked_seconds": secs(st.Worked), "worked_seconds": secs(st.Working()), "active_seconds": secs(st.Active), "idle_seconds": secs(st.Idle),
-			"break_seconds": secs(st.Break), "manual_seconds": secs(st.Manual), "shift": shiftLabel(cfg),
-			"late": isLate, "absent": isAbsent, "last_screenshot": shot,
+		rows = append(rows, overviewRow{
+			userID: m.UserID, name: m.Name, status: status, shift: shiftLabel(cfg), clockIn: st.FirstIn, clockOut: outAt,
+			worked: st.Working(), lastShot: shotAt, late: isLate, absent: isAbsent,
+			data: map[string]any{
+				"user_id": m.UserID, "employee_name": m.Name, "device_id": m.Device.ID, "device_name": m.Device.Name,
+				"platform": m.Device.Platform, "online": online, "status": status, "is_clocked_in": st.Open,
+				"current_app": m.Device.LastApp, "last_seen_at": isoPtr(m.Device.LastSeenAt),
+				"clock_in": isoPtr(st.FirstIn), "clock_out": out,
+				"tracked_seconds": secs(st.Worked), "worked_seconds": secs(st.Working()), "active_seconds": secs(st.Active), "idle_seconds": secs(st.Idle),
+				"break_seconds": secs(st.Break), "manual_seconds": secs(st.Manual), "shift": shiftLabel(cfg),
+				"late": isLate, "absent": isAbsent, "last_screenshot": shot,
+			},
 		})
 	}
 	totals["total_members"] = len(members)
@@ -273,16 +383,34 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, e *Emplo
 	if workedCount > 0 {
 		totals["avg_worked_seconds"] = int64(workedSum / float64(workedCount))
 	}
-	if rows == nil {
-		rows = []map[string]any{}
+	resp := map[string]any{"status": "success", "message": "successfully fetched", "date": day, "is_today": isToday, "workday": workday, "settings": cfg, "totals": totals}
+	if paged {
+		kept := []overviewRow{}
+		for _, row := range rows {
+			if row.matches(pg.Filter) && matchesSearch(row.name, pg.Search) {
+				kept = append(kept, row)
+			}
+		}
+		sortOverview(kept, pg.Sort, pg.Desc)
+		var page []overviewRow
+		page, resp["meta"] = pageSlice(kept, pg)
+		rows = page
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "success", "message": "successfully fetched", "date": day, "is_today": isToday, "workday": workday, "settings": cfg, "totals": totals, "data": rows})
+	data := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		data = append(data, row.data)
+	}
+	resp["data"] = data
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleMemberDay(w http.ResponseWriter, r *http.Request, e *Employer, companyID int64) {
 	userID, _ := strconv.ParseInt(r.PathValue("user"), 10, 64)
 	if userID <= 0 {
 		writeErr(w, http.StatusUnprocessableEntity, "invalid user")
+		return
+	}
+	if denyMember(w, r, userID) {
 		return
 	}
 	start, end, err := s.dayBounds(r.URL.Query().Get("date"))
@@ -379,10 +507,15 @@ type metricTotals struct {
 	count   int
 }
 
-func (s *Server) monthMetrics(companyID int64, from, to time.Time) (map[string]*metricTotals, statsIndex, error) {
+func (s *Server) monthMetrics(companyID int64, sc Scope, from, to time.Time) (map[string]*metricTotals, statsIndex, error) {
 	ix, err := s.collect(companyID, 0, from, to)
 	if err != nil {
 		return nil, nil, err
+	}
+	for user := range ix {
+		if !sc.Allows(user) {
+			delete(ix, user)
+		}
 	}
 	out := map[string]*metricTotals{}
 	for _, k := range []string{"worked", "idle", "active", "manual"} {
@@ -413,50 +546,85 @@ func pctChange(cur, prev float64) any {
 	return float64(int((cur-prev)/prev*1000)) / 10
 }
 
-func (s *Server) handleMonthly(w http.ResponseWriter, r *http.Request, e *Employer, companyID int64) {
-	month := r.URL.Query().Get("month")
-	now := time.Now().In(s.cfg.Location)
+func (s *Server) parseMonth(month string, now time.Time) (time.Time, time.Time, error) {
 	first := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, s.cfg.Location)
 	if month != "" {
 		t, err := time.ParseInLocation("2006-01", month, s.cfg.Location)
 		if err != nil {
-			writeErr(w, http.StatusUnprocessableEntity, "month must be YYYY-MM")
-			return
+			return time.Time{}, time.Time{}, fmt.Errorf("month must be YYYY-MM")
 		}
 		first = t
 	}
-	next := first.AddDate(0, 1, 0)
-	prevFirst := first.AddDate(0, -1, 0)
+	return first, first.AddDate(0, 1, 0), nil
+}
 
-	cur, ix, err := s.monthMetrics(companyID, first, next.Add(-time.Second))
+type attendance struct {
+	present int
+	late    int
+	absent  int
+}
+
+func (s *Server) monthAttendance(cfg Settings, members []member, ix statsIndex, first, next, now time.Time) map[int64]*attendance {
+	out := map[int64]*attendance{}
+	for _, m := range members {
+		out[m.UserID] = &attendance{}
+	}
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, s.cfg.Location)
+	for d := first; d.Before(next) && !d.After(now); d = d.AddDate(0, 0, 1) {
+		key := d.Format("2006-01-02")
+		workday := s.isWorkday(cfg, d)
+		for _, m := range members {
+			st := ix[m.UserID][key]
+			a := out[m.UserID]
+			if st != nil && (st.FirstIn != nil || st.Working() > 0) {
+				a.present++
+			}
+			if st != nil && st.FirstIn != nil && st.FirstIn.After(s.lateCutoff(cfg, d)) {
+				a.late++
+			}
+			if workday && d.Before(today) && (st == nil || st.Working() == 0) {
+				a.absent++
+			}
+		}
+	}
+	return out
+}
+
+func (s *Server) handleMonthly(w http.ResponseWriter, r *http.Request, e *Employer, companyID int64) {
+	now := time.Now().In(s.cfg.Location)
+	first, next, err := s.parseMonth(r.URL.Query().Get("month"), now)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	prevFirst := first.AddDate(0, -1, 0)
+	sc := scopeOf(r)
+
+	cur, ix, err := s.monthMetrics(companyID, sc, first, next.Add(-time.Second))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not compute report")
 		return
 	}
-	prev, _, err := s.monthMetrics(companyID, prevFirst, first.Add(-time.Second))
+	prev, _, err := s.monthMetrics(companyID, sc, prevFirst, first.Add(-time.Second))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not compute report")
 		return
 	}
 	members, _ := s.members(companyID)
+	members = scopeMembers(sc, members)
 	names := map[int64]string{}
 	for _, m := range members {
 		names[m.UserID] = m.Name
 	}
 	cfg := s.store.GetSettings(companyID)
 
-	lateUsers, absentUsers := map[int64]bool{}, map[int64]bool{}
-	for d := first; d.Before(next) && !d.After(now); d = d.AddDate(0, 0, 1) {
-		key := d.Format("2006-01-02")
-		workday := s.isWorkday(cfg, d)
-		for _, m := range members {
-			st := ix[m.UserID][key]
-			if st != nil && st.FirstIn != nil && st.FirstIn.After(s.lateCutoff(cfg, d)) {
-				lateUsers[m.UserID] = true
-			}
-			if workday && d.Before(time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, s.cfg.Location)) && (st == nil || st.Working() == 0) {
-				absentUsers[m.UserID] = true
-			}
+	lateUsers, absentUsers := 0, 0
+	for _, a := range s.monthAttendance(cfg, members, ix, first, next, now) {
+		if a.late > 0 {
+			lateUsers++
+		}
+		if a.absent > 0 {
+			absentUsers++
 		}
 	}
 
@@ -504,8 +672,84 @@ func (s *Server) handleMonthly(w http.ResponseWriter, r *http.Request, e *Employ
 
 	writeOK(w, "successfully fetched", map[string]any{
 		"month": first.Format("2006-01"), "total_members": len(members),
-		"late_members": len(lateUsers), "absent_members": len(absentUsers), "metrics": metrics,
+		"late_members": lateUsers, "absent_members": absentUsers, "metrics": metrics,
 	})
+}
+
+var monthlyMemberSorts = []string{"name", "days_present", "late_days", "absent_days", "worked_seconds", "idle_seconds", "manual_seconds", "active_seconds"}
+
+func (s *Server) handleMonthlyMembers(w http.ResponseWriter, r *http.Request, e *Employer, companyID int64) {
+	q := r.URL.Query()
+	pg, err := parsePaging(q, monthlyMemberSorts, []string{"all"}, "name")
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	now := time.Now().In(s.cfg.Location)
+	first, next, err := s.parseMonth(q.Get("month"), now)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	sc := scopeOf(r)
+	cur, ix, err := s.monthMetrics(companyID, sc, first, next.Add(-time.Second))
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not compute report")
+		return
+	}
+	members, err := s.members(companyID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not load members")
+		return
+	}
+	members = scopeMembers(sc, members)
+	att := s.monthAttendance(s.store.GetSettings(companyID), members, ix, first, next, now)
+
+	type row struct {
+		name string
+		vals map[string]float64
+		data map[string]any
+		uid  int64
+	}
+	rows := []row{}
+	for _, m := range members {
+		if !matchesSearch(m.Name, pg.Search) {
+			continue
+		}
+		a := att[m.UserID]
+		vals := map[string]float64{
+			"days_present": float64(a.present), "late_days": float64(a.late), "absent_days": float64(a.absent),
+			"worked_seconds": cur["worked"].perUser[m.UserID], "idle_seconds": cur["idle"].perUser[m.UserID],
+			"manual_seconds": cur["manual"].perUser[m.UserID], "active_seconds": cur["active"].perUser[m.UserID],
+		}
+		data := map[string]any{"user_id": m.UserID, "employee_name": m.Name}
+		for k, v := range vals {
+			data[k] = int64(v)
+		}
+		rows = append(rows, row{name: m.Name, vals: vals, data: data, uid: m.UserID})
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i], rows[j]
+		if pg.Sort != "name" && a.vals[pg.Sort] != b.vals[pg.Sort] {
+			if pg.Desc {
+				return a.vals[pg.Sort] > b.vals[pg.Sort]
+			}
+			return a.vals[pg.Sort] < b.vals[pg.Sort]
+		}
+		if n := strings.Compare(strings.ToLower(a.name), strings.ToLower(b.name)); n != 0 {
+			if pg.Sort == "name" && pg.Desc {
+				return n > 0
+			}
+			return n < 0
+		}
+		return a.uid < b.uid
+	})
+	page, meta := pageSlice(rows, pg)
+	data := make([]map[string]any, 0, len(page))
+	for _, rw := range page {
+		data = append(data, rw.data)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "success", "message": "successfully fetched", "month": first.Format("2006-01"), "data": data, "meta": meta})
 }
 
 func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request, e *Employer, companyID int64) {
@@ -557,6 +801,13 @@ func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request, e *E
 		writeErr(w, http.StatusUnprocessableEntity, "screenshot_max_width must be 640-3840")
 		return
 	}
+	if in.ScreenshotRetentionDays == 0 {
+		in.ScreenshotRetentionDays = s.store.GetSettings(companyID).ScreenshotRetentionDays
+	}
+	if in.ScreenshotRetentionDays < 7 || in.ScreenshotRetentionDays > 365 {
+		writeErr(w, http.StatusUnprocessableEntity, "screenshot_retention_days must be 7-365")
+		return
+	}
 	valid := map[string]bool{"sun": true, "mon": true, "tue": true, "wed": true, "thu": true, "fri": true, "sat": true}
 	clean := []string{}
 	for _, d := range in.WeeklyOff {
@@ -603,6 +854,9 @@ func (s *Server) handleGetMemberSettings(w http.ResponseWriter, r *http.Request,
 	userID, _ := strconv.ParseInt(r.PathValue("user"), 10, 64)
 	if userID <= 0 {
 		writeErr(w, http.StatusUnprocessableEntity, "invalid user")
+		return
+	}
+	if denyMember(w, r, userID) {
 		return
 	}
 	writeOK(w, "successfully fetched", memberSettingsPayload(s, companyID, userID))
@@ -682,6 +936,9 @@ func (s *Server) handleAddManual(w http.ResponseWriter, r *http.Request, e *Empl
 		writeErr(w, http.StatusUnprocessableEntity, "date must be YYYY-MM-DD and not in the future")
 		return
 	}
+	if denyMember(w, r, userID) {
+		return
+	}
 	if in.Minutes <= 0 || in.Minutes > 24*60 {
 		writeErr(w, http.StatusUnprocessableEntity, "minutes must be between 1 and 1440")
 		return
@@ -695,12 +952,20 @@ func (s *Server) handleAddManual(w http.ResponseWriter, r *http.Request, e *Empl
 		writeErr(w, http.StatusInternalServerError, "could not save manual time")
 		return
 	}
-	s.broker.Publish(companyID, "device-activity-updated", map[string]any{"kind": "manual", "summary": map[string]any{"user_id": userID}})
+	s.broker.Publish(companyID, userID, "device-activity-updated", map[string]any{"kind": "manual", "summary": map[string]any{"user_id": userID}})
 	writeJSON(w, http.StatusCreated, map[string]any{"status": "success", "message": "manual time added", "data": map[string]any{"id": id}})
 }
 
 func (s *Server) handleDeleteManual(w http.ResponseWriter, r *http.Request, e *Employer, companyID int64) {
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	entry, err := s.store.ManualByID(companyID, id)
+	if err != nil {
+		writeErr(w, http.StatusNotFound, "manual entry not found")
+		return
+	}
+	if denyMember(w, r, entry.UserID) {
+		return
+	}
 	ok, err := s.store.DeleteManual(companyID, id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not delete")
@@ -710,6 +975,6 @@ func (s *Server) handleDeleteManual(w http.ResponseWriter, r *http.Request, e *E
 		writeErr(w, http.StatusNotFound, "manual entry not found")
 		return
 	}
-	s.broker.Publish(companyID, "device-activity-updated", map[string]any{"kind": "manual", "summary": map[string]any{}})
+	s.broker.Publish(companyID, entry.UserID, "device-activity-updated", map[string]any{"kind": "manual", "summary": map[string]any{"user_id": entry.UserID}})
 	writeOK(w, "manual time removed", nil)
 }

@@ -70,6 +70,16 @@ func runInstall() {
 	// Start Menu shortcut
 	createShortcut(binPath, installDir)
 
+	// Install a click-to-uninstall: copy this setup exe and make a Start Menu shortcut.
+	uninstallExe := filepath.Join(installDir, "MyMonitor-Uninstall.exe")
+	if self, err := os.Executable(); err == nil {
+		if data, err := os.ReadFile(self); err == nil {
+			if os.WriteFile(uninstallExe, data, 0755) == nil {
+				createUninstallShortcut(uninstallExe)
+			}
+		}
+	}
+
 	// Launch app
 	fmt.Println()
 	info("Starting My Monitor in background...")
@@ -119,6 +129,26 @@ $s.Save()`, shortcutPath, binPath, workDir)
 	}
 }
 
+func createUninstallShortcut(uninstallExe string) {
+	appData := os.Getenv("APPDATA")
+	if appData == "" {
+		return
+	}
+	shortcutDir := filepath.Join(appData, "Microsoft", "Windows", "Start Menu", "Programs")
+	os.MkdirAll(shortcutDir, 0755)
+	shortcutPath := filepath.Join(shortcutDir, "Uninstall My Monitor.lnk")
+	ps := fmt.Sprintf(`
+$ws = New-Object -ComObject WScript.Shell
+$s  = $ws.CreateShortcut('%s')
+$s.TargetPath       = '%s'
+$s.Arguments        = '--uninstall'
+$s.Description      = 'Uninstall My Monitor'
+$s.Save()`, shortcutPath, uninstallExe)
+	if err := psRun(ps); err == nil {
+		ok("Start Menu shortcut: " + shortcutPath)
+	}
+}
+
 // ── Uninstall ──────────────────────────────────────────────────────
 
 func runUninstall() {
@@ -132,10 +162,10 @@ func runUninstall() {
 	ok("Registry startup entry removed")
 
 	if appData := os.Getenv("APPDATA"); appData != "" {
-		shortcut := filepath.Join(appData, "Microsoft", "Windows", "Start Menu", "Programs", "My Monitor.lnk")
-		if err := os.Remove(shortcut); err == nil {
-			ok("Start Menu shortcut removed")
-		}
+		progs := filepath.Join(appData, "Microsoft", "Windows", "Start Menu", "Programs")
+		os.Remove(filepath.Join(progs, "My Monitor.lnk"))
+		os.Remove(filepath.Join(progs, "Uninstall My Monitor.lnk"))
+		ok("Start Menu shortcuts removed")
 	}
 
 	installDir := installDirectory()

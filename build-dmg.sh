@@ -94,6 +94,9 @@ chmod +x "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
 # Menu-bar icon: Hajir stopwatch icon only
 cp web/assets/hajir-menubar.png "${APP_BUNDLE}/Contents/Resources/hajir-menubar.png"
 
+# App icon (Finder, Dock, DMG)
+cp web/assets/icons/hajir.icns "${APP_BUNDLE}/Contents/Resources/AppIcon.icns"
+
 # Info.plist
 cat > "${APP_BUNDLE}/Contents/Info.plist" << PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -108,6 +111,7 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" << PLIST
     <key>CFBundleVersion</key>         <string>${VERSION}</string>
     <key>CFBundleShortVersionString</key><string>${VERSION}</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
+    <key>CFBundleIconFile</key>        <string>AppIcon</string>
     <key>CFBundleSignature</key>       <string>????</string>
     <key>LSMinimumSystemVersion</key>  <string>11.0</string>
     <key>LSUIElement</key>             <true/>
@@ -148,6 +152,42 @@ cp -r "${APP_BUNDLE}" "${DMG_STAGING}/"
 # Symlink to /Applications so users get the drag-to-install UI
 ln -s /Applications "${DMG_STAGING}/Applications"
 
+# Add an uninstaller the user can double-click (native dialogs via osascript)
+cat > "${DMG_STAGING}/Uninstall MyMonitor.command" << 'UNINST'
+#!/bin/bash
+# Uninstalls My Monitor from this Mac using native macOS dialogs.
+
+osa() { /usr/bin/osascript "$@"; }
+
+# 1. Confirm
+if ! osa -e 'display dialog "This will remove My Monitor from this Mac, including its background login item." with title "Uninstall My Monitor" buttons {"Cancel","Uninstall"} default button "Uninstall" cancel button "Cancel" with icon caution' >/dev/null 2>&1; then
+  exit 0
+fi
+
+# 2. Stop login item + running app, remove the app
+launchctl unload "$HOME/Library/LaunchAgents/com.hajir.tracker.plist" 2>/dev/null || true
+rm -f "$HOME/Library/LaunchAgents/com.hajir.tracker.plist"
+pkill -f "MyMonitor.app/Contents/MacOS/MyMonitor" 2>/dev/null || true
+pkill -f "/Applications/MyMonitor.app" 2>/dev/null || true
+rm -rf "/Applications/MyMonitor.app"
+
+# 3. Ask about local data
+DATA_MSG="My Monitor has been removed."
+if osa -e 'display dialog "Also delete local data (screenshots, database and settings)?" with title "Uninstall My Monitor" buttons {"Keep Data","Delete Data"} default button "Keep Data" with icon caution' -e 'button returned of result' 2>/dev/null | grep -q "Delete Data"; then
+  rm -rf "$HOME/Library/Application Support/MyMonitor"
+  rm -f "$HOME/Library/Logs/MyMonitor.log"
+  DATA_MSG="My Monitor and its local data have been removed."
+fi
+
+# 4. Done
+osa -e "display dialog \"${DATA_MSG}\nIf this device was managed, remember to revoke it in the dashboard.\" with title \"Uninstall My Monitor\" buttons {\"OK\"} default button \"OK\" with icon note" >/dev/null 2>&1
+
+# Close the Terminal window this script opened.
+osa -e 'tell application "Terminal" to close (every window whose name contains "Uninstall MyMonitor")' >/dev/null 2>&1 &
+exit 0
+UNINST
+chmod +x "${DMG_STAGING}/Uninstall MyMonitor.command"
+
 # Add a README
 cat > "${DMG_STAGING}/README.txt" << README
 My Monitor v${VERSION}
@@ -158,7 +198,8 @@ My Monitor v${VERSION}
 4. Default login: admin / admin
    ⚠ Change your password in the Setup wizard!
 
-To uninstall: delete MyMonitor.app from Applications.
+To uninstall: double-click "Uninstall MyMonitor.command" in this disk image
+(or just delete MyMonitor.app from Applications).
 Data is stored in ~/Library/Application Support/MyMonitor/
 README
 
@@ -178,6 +219,37 @@ rm -f "${TEMP_DMG}"
 rm -rf "${DMG_STAGING}"
 
 ok "DMG: ${FINAL_DMG}"
+
+# ── Notarization (optional) ────────────────────────────────────────
+# Runs only when the app was signed with a Developer ID AND credentials are
+# provided. Provide EITHER a stored notarytool keychain profile:
+#     export AC_NOTARY_PROFILE="hajir-notary"
+#   (create once: xcrun notarytool store-credentials hajir-notary \
+#        --apple-id you@apple.com --team-id TEAMID --password APP_SPECIFIC_PASSWORD)
+# OR the raw credentials:
+#     export APPLE_ID="you@apple.com" APPLE_TEAM_ID="TEAMID" APPLE_APP_PASSWORD="app-specific-pw"
+if [[ "$SIGN_IDENTITY" == Developer\ ID* ]]; then
+    NOTARY_ARGS=()
+    if [[ -n "${AC_NOTARY_PROFILE:-}" ]]; then
+        NOTARY_ARGS=(--keychain-profile "$AC_NOTARY_PROFILE")
+    elif [[ -n "${APPLE_ID:-}" && -n "${APPLE_TEAM_ID:-}" && -n "${APPLE_APP_PASSWORD:-}" ]]; then
+        NOTARY_ARGS=(--apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD")
+    fi
+    if [[ ${#NOTARY_ARGS[@]} -gt 0 ]]; then
+        echo "  Submitting to Apple notary service (this can take a few minutes)..."
+        if xcrun notarytool submit "${FINAL_DMG}" "${NOTARY_ARGS[@]}" --wait; then
+            xcrun stapler staple "${FINAL_DMG}" && ok "Notarized & stapled: ${FINAL_DMG}"
+        else
+            warn "Notarization failed. The DMG is signed but not notarized (Gatekeeper will warn)."
+            warn "Check the log: xcrun notarytool log <submission-id> ${NOTARY_ARGS[*]}"
+        fi
+    else
+        warn "Signed with Developer ID but no notary credentials set — skipping notarization."
+        warn "Set AC_NOTARY_PROFILE, or APPLE_ID + APPLE_TEAM_ID + APPLE_APP_PASSWORD, to notarize."
+    fi
+else
+    [[ -n "$SIGN_IDENTITY" ]] && warn "Not a Developer ID signature — cannot notarize (Gatekeeper will still warn on other Macs)."
+fi
 
 # ── Done ──────────────────────────────────────────────────────────
 echo ""

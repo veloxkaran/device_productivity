@@ -1,0 +1,22 @@
+# Build artifacts & local data — keep the build context small and clean
+dist/
+hub-data/
+data/
+*.dmg
+my-monitor
+my-monitor.exe
+_*.tgz
+_*.jsx
+*.log
+
+# VCS & editor
+.git/
+.gitignore
+.idea/
+.vscode/
+.DS_Store
+
+# macOS packaging (not needed to build the hub)
+build-dmg.sh
+scripts-dev-cert.sh
+cmd/installer-*/asset.bin

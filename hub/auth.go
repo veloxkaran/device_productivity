@@ -16,9 +16,34 @@ type Employer struct {
 }
 
 type EmployerCompany struct {
-	ID      int64  `json:"id"`
-	Name    string `json:"name"`
-	IsOwner bool   `json:"is_owner"`
+	ID                int64   `json:"id"`
+	Name              string  `json:"name"`
+	IsOwner           bool    `json:"is_owner"`
+	CanViewActivity   bool    `json:"can_view_activity"`
+	ActivityMemberIDs []int64 `json:"activity_member_ids"`
+}
+
+func (c *EmployerCompany) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		ID                int64   `json:"id"`
+		Name              string  `json:"name"`
+		IsOwner           bool    `json:"is_owner"`
+		CanViewActivity   *bool   `json:"can_view_activity"`
+		ActivityMemberIDs []int64 `json:"activity_member_ids"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	c.ID, c.Name, c.IsOwner, c.ActivityMemberIDs = raw.ID, raw.Name, raw.IsOwner, raw.ActivityMemberIDs
+	c.CanViewActivity = raw.IsOwner
+	if raw.CanViewActivity != nil {
+		c.CanViewActivity = *raw.CanViewActivity
+	}
+	return nil
+}
+
+type EmployerVerifier interface {
+	Verify(token string) (*Employer, error)
 }
 
 type cachedEmployer struct {
@@ -94,4 +119,22 @@ func (v *Verifier) Verify(token string) (*Employer, error) {
 func (e *Employer) Owns(companyID int64) bool {
 	c, ok := e.Companies[companyID]
 	return ok && c.IsOwner
+}
+
+func (e *Employer) Access(companyID int64) (Scope, bool) {
+	c, ok := e.Companies[companyID]
+	if !ok || !c.CanViewActivity {
+		return Scope{}, false
+	}
+	if c.IsOwner {
+		return Scope{IsOwner: true}, true
+	}
+	if c.ActivityMemberIDs == nil {
+		return Scope{}, true
+	}
+	ids := make(map[int64]bool, len(c.ActivityMemberIDs))
+	for _, id := range c.ActivityMemberIDs {
+		ids[id] = true
+	}
+	return Scope{MemberIDs: ids}, true
 }

@@ -1,0 +1,37 @@
+# Hajir Activity Hub — run with:  docker compose up -d --build
+#
+# The hub talks to your hajir-v2 API to verify employer tokens. Point
+# HAJIR_API_URL at it. On Docker Desktop, host.docker.internal reaches
+# services running on your host machine.
+services:
+  hub:
+    build:
+      context: .
+    image: hajir-hub:latest
+    container_name: hajir-hub
+    restart: unless-stopped
+    ports:
+      - "4010:4010"
+    environment:
+      HUB_ADDR: ":4010"
+      HUB_DATA_DIR: "/data"
+      # Public URL the dashboard & signed screenshot/download links use.
+      HUB_PUBLIC_URL: "${HUB_PUBLIC_URL:-http://localhost:4010}"
+      # Your hajir-v2 API base (used to verify employer tokens).
+      HAJIR_API_URL: "${HAJIR_API_URL:-http://host.docker.internal:8001/api/v2}"
+      # Comma-separated dashboard origins allowed by CORS.
+      HUB_ALLOWED_ORIGINS: "${HUB_ALLOWED_ORIGINS:-http://localhost:3000}"
+      HUB_TIMEZONE: "${HUB_TIMEZONE:-Asia/Kathmandu}"
+      # Optional shared secret for /api/internal/* module toggles.
+      HUB_INTERNAL_KEY: "${HUB_INTERNAL_KEY:-}"
+    volumes:
+      - hub-data:/data
+      # Desktop-app installers served on the dashboard "Download app" tab.
+      # Put built installers in ./hub-data/downloads on the host; they appear
+      # inside the container at /data/downloads (read-only).
+      - ./hub-data/downloads:/data/downloads:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  hub-data:

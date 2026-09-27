@@ -10,9 +10,11 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -22,10 +24,10 @@ import (
 type Server struct {
 	cfg      Config
 	store    *Store
-	verifier *Verifier
+	verifier EmployerVerifier
 	broker   *Broker
+	tickets  *ticketScopes
 }
-
 
 func Run() {
 	cfg, err := LoadConfig()
@@ -39,7 +41,7 @@ func Run() {
 	defer store.Close()
 
 	displayLocation = cfg.Location
-	s := &Server{cfg: cfg, store: store, verifier: NewVerifier(cfg.HajirAPIURL), broker: NewBroker()}
+	s := &Server{cfg: cfg, store: store, verifier: NewVerifier(cfg.HajirAPIURL), broker: NewBroker(), tickets: newTicketScopes()}
 	go s.pruneLoop()
 
 	srv := &http.Server{Addr: cfg.Addr, Handler: s.routes(), ReadHeaderTimeout: 10 * time.Second}
@@ -72,21 +74,27 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/device/register", s.handleDeviceRegister)
 
 	mux.Handle("GET /api/employer/{company}/devices", s.employer(s.handleDevices))
-	mux.Handle("POST /api/employer/{company}/devices", s.employer(s.handleCreateDevice))
-	mux.Handle("DELETE /api/employer/{company}/devices/{id}", s.employer(s.handleRevokeDevice))
+	mux.Handle("POST /api/employer/{company}/devices", s.owner("manage devices", s.handleCreateDevice))
+	mux.Handle("DELETE /api/employer/{company}/devices/{id}", s.owner("manage devices", s.handleRevokeDevice))
 	mux.Handle("GET /api/employer/{company}/time-entries", s.employer(s.handleTimeEntries))
 	mux.Handle("GET /api/employer/{company}/timeline", s.employer(s.handleTimeline))
 	mux.Handle("GET /api/employer/{company}/screenshots", s.employer(s.handleScreenshots))
+	mux.Handle("DELETE /api/employer/{company}/screenshots/{id}", s.owner("delete screenshots", s.handleDeleteScreenshot))
 	mux.Handle("GET /api/employer/{company}/overview", s.employer(s.handleOverview))
 	mux.Handle("GET /api/employer/{company}/members/{user}/day", s.employer(s.handleMemberDay))
 	mux.Handle("GET /api/employer/{company}/monthly", s.employer(s.handleMonthly))
+	mux.Handle("GET /api/employer/{company}/monthly/members", s.employer(s.handleMonthlyMembers))
 	mux.Handle("POST /api/employer/{company}/members/{user}/manual", s.employer(s.handleAddManual))
 	mux.Handle("DELETE /api/employer/{company}/manual/{id}", s.employer(s.handleDeleteManual))
+	mux.Handle("GET /api/employer/{company}/clock", s.employer(s.handleClock))
+	mux.Handle("POST /api/employer/{company}/ws-ticket", s.employer(s.handleWSTicket))
 	mux.Handle("GET /api/employer/{company}/settings", s.employer(s.handleGetSettings))
-	mux.Handle("PUT /api/employer/{company}/settings", s.employer(s.handleSaveSettings))
+	mux.Handle("PUT /api/employer/{company}/settings", s.owner("change company settings", s.handleSaveSettings))
 	mux.Handle("GET /api/employer/{company}/members/{user}/settings", s.employer(s.handleGetMemberSettings))
-	mux.Handle("PUT /api/employer/{company}/members/{user}/settings", s.employer(s.handleSaveMemberSettings))
+	mux.Handle("PUT /api/employer/{company}/members/{user}/settings", s.owner("change member settings", s.handleSaveMemberSettings))
 
+	mux.Handle("GET /api/employer/{company}/downloads", s.employer(s.handleDownloads))
+	mux.HandleFunc("GET /downloads/{name}", s.handleDownloadFile)
 	mux.HandleFunc("PUT /api/internal/companies/{company}/modules", s.handleInternalModules)
 
 	mux.HandleFunc("GET /files/screenshots/{id}", s.handleScreenshotFile)
@@ -156,11 +164,12 @@ func (s *Server) employer(h func(http.ResponseWriter, *http.Request, *Employer, 
 			writeErr(w, http.StatusUnauthorized, err.Error())
 			return
 		}
-		if !emp.Owns(companyID) {
-			writeErr(w, http.StatusForbidden, "only the company owner can view device activity")
+		sc, ok := emp.Access(companyID)
+		if !ok {
+			writeErr(w, http.StatusForbidden, "you do not have access to device activity for this company")
 			return
 		}
-		h(w, r, emp, companyID)
+		h(w, withScope(r, sc), emp, companyID)
 	})
 }
 
@@ -219,20 +228,157 @@ func (s *Server) handleScreenshotFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) pruneLoop() {
+	var lastPurge time.Time
 	for {
-		shots, _ := s.store.OldScreenshots(time.Now().AddDate(0, 0, -s.cfg.ScreenshotRetainDy))
-		for _, sh := range shots {
-			os.Remove(filepath.Join(s.cfg.DataDir, "screenshots", sh.Path))
-			s.store.DeleteScreenshot(sh.ID)
+		shots := 0
+		if time.Since(lastPurge) >= 24*time.Hour {
+			n, err := s.purgeScreenshots(time.Now())
+			if err != nil {
+				log.Printf("hub: screenshot purge: %v", err)
+			} else {
+				lastPurge = time.Now()
+			}
+			shots = n
 		}
 		n, _ := s.store.PruneSamples(time.Now().AddDate(0, 0, -s.cfg.SampleRetainDays))
-		if len(shots) > 0 || n > 0 {
-			log.Printf("hub: pruned %d screenshots, %d samples", len(shots), n)
+		if shots > 0 || n > 0 {
+			log.Printf("hub: pruned %d screenshots, %d samples", shots, n)
 		}
 		time.Sleep(6 * time.Hour)
 	}
 }
 
+func (s *Server) removeScreenshotFile(path string) {
+	os.Remove(filepath.Join(s.cfg.DataDir, "screenshots", path))
+}
+
+func (s *Server) purgeScreenshots(now time.Time) (int, error) {
+	companies, err := s.store.ScreenshotCompanies()
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	for _, companyID := range companies {
+		cutoff := now.AddDate(0, 0, -s.store.GetSettings(companyID).ScreenshotRetentionDays)
+		for {
+			shots, err := s.store.OldCompanyScreenshots(companyID, cutoff)
+			if err != nil {
+				return total, err
+			}
+			for _, sh := range shots {
+				if err := s.store.DeleteScreenshot(sh.ID); err != nil {
+					return total, err
+				}
+				s.removeScreenshotFile(sh.Path)
+				total++
+			}
+			if len(shots) < oldScreenshotBatch {
+				break
+			}
+		}
+	}
+	return total, nil
+}
+
 func readLimited(r *http.Request, max int64) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(r.Body, max))
+}
+
+// downloadsDir is where desktop-app installers are placed for employers to grab.
+func (s *Server) downloadsDir() string { return filepath.Join(s.cfg.DataDir, "downloads") }
+
+// verRE extracts a semver-ish version from an installer filename, e.g.
+// "MyMonitor-Setup-windows-amd64-v2.1.0.exe" -> "2.1.0".
+var verRE = regexp.MustCompile(`(?i)v?(\d+\.\d+(?:\.\d+)?)`)
+
+// platformOf maps an installer filename to a platform label, an
+// architecture label (correct for that platform), and a version ("" if none).
+func platformOf(name string) (platform, arch, version string) {
+	n := strings.ToLower(name)
+
+	switch {
+	case strings.HasSuffix(n, ".dmg") || strings.Contains(n, "darwin") || strings.Contains(n, "macos") || strings.Contains(n, "-mac"):
+		platform = "macOS"
+	case strings.HasSuffix(n, ".exe") || strings.Contains(n, "windows") || strings.Contains(n, "win"):
+		platform = "Windows"
+	case strings.Contains(n, "linux"):
+		platform = "Linux"
+	default:
+		platform = "Other"
+	}
+
+	isARM := strings.Contains(n, "arm64") || strings.Contains(n, "aarch64")
+	isX64 := strings.Contains(n, "amd64") || strings.Contains(n, "x64") || strings.Contains(n, "x86_64") || strings.Contains(n, "intel")
+	isUniv := strings.Contains(n, "universal")
+	switch {
+	case isUniv:
+		arch = "Universal"
+	case platform == "macOS" && isARM:
+		arch = "Apple Silicon"
+	case platform == "macOS" && isX64:
+		arch = "Intel"
+	case isARM:
+		arch = "ARM64"
+	case isX64:
+		arch = "x64 (Intel/AMD)"
+	}
+
+	// A macOS .dmg with no explicit arch is our universal build.
+	if platform == "macOS" && arch == "" {
+		arch = "Universal"
+	}
+
+	if m := verRE.FindStringSubmatch(name); m != nil {
+		version = m[1]
+	}
+	return platform, arch, version
+}
+
+// handleDownloads lists the desktop-app installers available for download.
+func (s *Server) handleDownloads(w http.ResponseWriter, r *http.Request, e *Employer, companyID int64) {
+	dir := s.downloadsDir()
+	entries, _ := os.ReadDir(dir)
+	files := []map[string]any{}
+	for _, en := range entries {
+		if en.IsDir() {
+			continue
+		}
+		name := en.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		info, err := en.Info()
+		if err != nil {
+			continue
+		}
+		plat, arch, version := platformOf(name)
+		files = append(files, map[string]any{
+			"name":        name,
+			"platform":    plat,
+			"arch":        arch,
+			"version":     version,
+			"size":        info.Size(),
+			"modified_at": info.ModTime().UTC().Format(time.RFC3339),
+			"url":         s.cfg.PublicURL + "/downloads/" + url.PathEscape(name),
+		})
+	}
+	writeOK(w, "downloads", map[string]any{"files": files})
+}
+
+// handleDownloadFile serves an installer. Public (binaries are not secret) but
+// strictly limited to files inside the downloads directory.
+func (s *Server) handleDownloadFile(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	// Reject any path traversal — only a bare filename is allowed.
+	if name == "" || name != filepath.Base(name) || strings.Contains(name, "..") {
+		http.Error(w, "invalid file", http.StatusBadRequest)
+		return
+	}
+	full := filepath.Join(s.downloadsDir(), name)
+	if fi, err := os.Stat(full); err != nil || fi.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+name+"\"")
+	http.ServeFile(w, r, full)
 }

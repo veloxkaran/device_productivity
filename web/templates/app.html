@@ -109,10 +109,10 @@ main{padding:18px 16px 14px}
 .card-foot{padding:7px 12px;font-size:11px}
 .inp{height:40px}.btn{height:42px;font-size:14px}
 .bigtime{font-size:32px}.resume{font-size:15px;margin:16px 0 14px}
-.choice{display:block;width:100%;text-align:left;border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:12px;transition:border-color .15s,background .15s}
+.choice{display:block;width:100%;text-align:left;border:1px solid var(--line);border-radius:9px;padding:10px 12px;margin-bottom:9px;transition:border-color .15s,background .15s}
 .choice:hover{border-color:var(--brand);background:var(--soft)}
-.choice-t{display:block;font-weight:600;font-size:15px;margin-bottom:4px}
-.choice-d{display:block;font-size:12px;color:var(--mute);line-height:1.45}
+.choice-t{display:block;font-weight:600;font-size:13.5px;margin-bottom:2px}
+.choice-d{display:block;font-size:11.5px;color:var(--mute);line-height:1.4}
 </style>
 </head>
 <body>
@@ -130,8 +130,8 @@ main{padding:18px 16px 14px}
 
   <main id="main">
     <section class="view" id="vSetup">
-      <p style="font-weight:600;font-size:16px;margin:8px 0 4px">Set up this computer</p>
-      <p class="sub" style="margin-bottom:20px">Choose how this device will be tracked. You only do this once.</p>
+      <p style="font-weight:600;font-size:14px;margin:2px 0 3px">Set up this computer</p>
+      <p class="sub" style="margin-bottom:14px;font-size:12px">Choose how this device will be tracked. You only do this once.</p>
       <button type="button" class="choice" id="chManual">
         <span class="choice-t">Manual</span>
         <span class="choice-d">The person signs in and starts &amp; stops tracking themselves. A Hajir icon stays in the menu bar.</span>
@@ -174,9 +174,11 @@ main{padding:18px 16px 14px}
     </section>
 
     <section class="view" id="vCompany">
-      <p style="font-weight:600;font-size:16px;margin-bottom:6px">Choose company</p>
-      <p class="sub" style="margin-bottom:18px">Your account belongs to more than one company.</p>
-      <div class="companies" id="companyList"></div>
+      <p style="font-weight:600;font-size:14px;margin:2px 0 3px">Choose company</p>
+      <p class="sub" style="margin-bottom:14px;font-size:12px">Your account belongs to more than one company.</p>
+      <label class="lbl" for="companySel">Company</label>
+      <div class="field"><select class="inp" id="companySel"></select></div>
+      <button class="btn btn-primary" id="btnCompany" type="button" style="margin-top:6px">Continue</button>
       <div class="foot"><a href="#" id="lnkBack">Back to sign in</a><span></span></div>
     </section>
 
@@ -361,8 +363,9 @@ main{padding:18px 16px 14px}
     } catch (e) {
       if (e.status === 409 && e.data.companies) {
         pendingLogin = true;
-        $('companyList').innerHTML = '';
-        e.data.companies.forEach((c) => { const b = document.createElement('button'); b.textContent = c.name; b.onclick = () => { show('vLogin'); doLogin(c.id); }; $('companyList').appendChild(b); });
+        const sel = $('companySel');
+        sel.innerHTML = '';
+        e.data.companies.forEach((c) => { const o = document.createElement('option'); o.value = c.id; o.textContent = c.name; sel.appendChild(o); });
         show('vCompany');
       } else { err.textContent = e.message; err.classList.add('show'); show('vLogin'); }
     } finally { setBusy(btn, false, 'Sign In'); }
@@ -385,6 +388,7 @@ main{padding:18px 16px 14px}
   };
   $('btnDash').onclick = () => window.open('/time', '_blank');
   $('lnkBack').onclick = (e) => { e.preventDefault(); show('vLogin'); };
+  $('btnCompany').onclick = () => { const id = Number($('companySel').value); if (id) { show('vLogin'); doLogin(id); } };
   $('chManual').onclick = () => { $('login').value = (S && S.login) || ''; show('vLogin'); };
   $('chAuto').onclick = () => { show('vToken'); };
   $('lnkBackSetup').onclick = (e) => { e.preventDefault(); show('vSetup'); };

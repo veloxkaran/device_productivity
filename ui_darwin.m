@@ -30,7 +30,7 @@ static NSString *const kAppURL = @"http://127.0.0.1:8090/app";
         img = [NSImage imageWithSystemSymbolName:@"timer" accessibilityDescription:@"Hajir Tracker"];
     }
     if (img) {
-        img.template = NO;
+        img.template = NO; // keep brand coral; reads on both light & dark menu bars
         self.item.button.image = img;
         self.item.button.imagePosition = NSImageOnly;
     }
@@ -170,6 +170,23 @@ void runCocoa(int hidden) {
         hajirDelegate = [[HajirDelegate alloc] init];
         [NSApp setDelegate:hajirDelegate];
         [hajirDelegate setupHidden:(hidden ? YES : NO)];
+
+        // Provide a standard Edit menu so Cmd-X/C/V/A work inside the WKWebView
+        // text fields (an accessory app has no menu bar by default, which is why
+        // copy/paste silently did nothing in the popover).
+        NSMenu *mainMenu = [[NSMenu alloc] init];
+        NSMenuItem *editContainer = [[NSMenuItem alloc] init];
+        [mainMenu addItem:editContainer];
+        NSMenu *editMenu = [[NSMenu alloc] initWithTitle:@"Edit"];
+        [[editMenu addItemWithTitle:@"Undo" action:@selector(undo:) keyEquivalent:@"z"] setKeyEquivalentModifierMask:NSEventModifierFlagCommand];
+        [[editMenu addItemWithTitle:@"Redo" action:@selector(redo:) keyEquivalent:@"Z"] setKeyEquivalentModifierMask:(NSEventModifierFlagCommand | NSEventModifierFlagShift)];
+        [editMenu addItem:[NSMenuItem separatorItem]];
+        [editMenu addItemWithTitle:@"Cut" action:@selector(cut:) keyEquivalent:@"x"];
+        [editMenu addItemWithTitle:@"Copy" action:@selector(copy:) keyEquivalent:@"c"];
+        [editMenu addItemWithTitle:@"Paste" action:@selector(paste:) keyEquivalent:@"v"];
+        [editMenu addItemWithTitle:@"Select All" action:@selector(selectAll:) keyEquivalent:@"a"];
+        [editContainer setSubmenu:editMenu];
+        [NSApp setMainMenu:mainMenu];
         if (!hidden) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
                 [hajirDelegate showPopover:nil];

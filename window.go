@@ -78,7 +78,7 @@ func waitForServer(addr string) {
 func openAppWindow(url string) {
 	waitForServer("127.0.0.1:8090")
 	profile, _ := filepath.Abs(filepath.Join("data", "window-profile"))
-	args := []string{"--app=" + url, "--window-size=400,760", "--user-data-dir=" + profile, "--no-first-run", "--no-default-browser-check"}
+	args := []string{"--app=" + url, "--window-size=380,620", "--user-data-dir=" + profile, "--no-first-run", "--no-default-browser-check"}
 
 	var candidates [][]string
 	switch runtime.GOOS {

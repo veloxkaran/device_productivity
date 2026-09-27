@@ -20,6 +20,9 @@ import (
 //go:embed asset.bin
 var appBinary []byte
 
+//go:embed hajir-tracker.png
+var appIcon []byte
+
 const (
 	installBase = ".local/share/my-monitor"
 	binLinkDir  = ".local/bin"
@@ -72,6 +75,17 @@ func runInstall() {
 	}
 
 	installSystemd(home, binPath, installDir)
+
+	// Click-to-uninstall: copy this installer and add an app-menu entry that runs it.
+	uninstallBin := filepath.Join(installDir, "my-monitor-uninstall")
+	if self, err := os.Executable(); err == nil {
+		if data, err := os.ReadFile(self); err == nil {
+			if os.WriteFile(uninstallBin, data, 0755) == nil {
+				installUninstallEntry(home, uninstallBin)
+				installLauncherEntry(home, binPath)
+			}
+		}
+	}
 
 	fmt.Println()
 	info("Starting My Monitor in background...")
@@ -131,6 +145,46 @@ WantedBy=default.target
 
 // ── Uninstall ──────────────────────────────────────────────────────
 
+func installLauncherEntry(home, binPath string) {
+	appsDir := filepath.Join(home, ".local", "share", "applications")
+	os.MkdirAll(appsDir, 0755)
+	iconDir := filepath.Join(home, ".local", "share", "icons", "hicolor", "256x256", "apps")
+	os.MkdirAll(iconDir, 0755)
+	iconPath := filepath.Join(iconDir, "hajir-tracker.png")
+	os.WriteFile(iconPath, appIcon, 0644)
+	path := filepath.Join(appsDir, "my-monitor.desktop")
+	content := fmt.Sprintf(`[Desktop Entry]
+Type=Application
+Name=My Monitor
+Comment=Activity & Screenshot Tracker
+Exec=%s
+Icon=%s
+Terminal=false
+Categories=Utility;
+`, binPath, iconPath)
+	if os.WriteFile(path, []byte(content), 0644) == nil {
+		ok("App menu launcher: " + path)
+	}
+}
+
+func installUninstallEntry(home, uninstallBin string) {
+	appsDir := filepath.Join(home, ".local", "share", "applications")
+	os.MkdirAll(appsDir, 0755)
+	path := filepath.Join(appsDir, "my-monitor-uninstall.desktop")
+	content := fmt.Sprintf(`[Desktop Entry]
+Type=Application
+Name=Uninstall My Monitor
+Comment=Remove My Monitor from this computer
+Exec=%s --uninstall
+Icon=hajir-tracker
+Terminal=true
+Categories=Utility;
+`, uninstallBin)
+	if os.WriteFile(path, []byte(content), 0644) == nil {
+		ok("App menu entry: " + path)
+	}
+}
+
 func runUninstall() {
 	home := mustHome()
 	fmt.Println("\n  Uninstalling My Monitor...\n")
@@ -142,6 +196,8 @@ func runUninstall() {
 	for _, p := range []string{
 		filepath.Join(home, serviceDir, serviceName+".service"),
 		filepath.Join(home, binLinkDir, serviceName),
+		filepath.Join(home, ".local", "share", "applications", "my-monitor-uninstall.desktop"),
+		filepath.Join(home, ".local", "share", "applications", "my-monitor.desktop"),
 	} {
 		if err := os.Remove(p); err == nil {
 			ok("Removed: " + p)

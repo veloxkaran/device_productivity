@@ -53,6 +53,9 @@ build-windows-amd64: deps
 	# -H windowsgui: no console window (required for the hidden/covert app)
 	GOOS=windows GOARCH=amd64  go build -ldflags="$(LDFLAGS) -H windowsgui" -o dist/my-monitor-windows-amd64.exe .
 
+build-windows-arm64: deps
+	GOOS=windows GOARCH=arm64  go build -ldflags="$(LDFLAGS) -H windowsgui" -o dist/my-monitor-windows-arm64.exe .
+
 build-all: deps
 	@mkdir -p dist
 	$(MAKE) build-mac-amd64
@@ -112,12 +115,39 @@ package-windows-amd64: build-windows-amd64
 	@echo ""; echo "  Installer: dist/MyMonitor-Setup-windows-amd64.exe"
 	@echo "  Usage on target: double-click MyMonitor-Setup-windows-amd64.exe"
 
+package-windows-arm64: build-windows-arm64
+	@echo "==> Packaging Windows arm64 installer..."
+	cp dist/my-monitor-windows-arm64.exe cmd/installer-windows/asset.bin
+	GOOS=windows GOARCH=arm64 go build \
+	    -tags packaging \
+	    -ldflags="-s -w -H windowsgui" \
+	    -o dist/MyMonitor-Setup-windows-arm64.exe \
+	    ./cmd/installer-windows/
+	rm -f cmd/installer-windows/asset.bin
+	@echo ""; echo "  Installer: dist/MyMonitor-Setup-windows-arm64.exe"
+
 # ── Build all platform packages ────────────────────────────────────
 package: package-macos package-linux-amd64 package-linux-arm64 package-windows-amd64
 	@echo ""
 	@echo "All installers in dist/:"
 	@ls -lh dist/MyMonitor-Setup-* 2>/dev/null || true
 	@ls -lh dist/MyMonitor-*.dmg  2>/dev/null || true
+
+# ── Publish installers to the hub's downloads folder ──────────────
+#   Builds every installer and copies them where the hub serves downloads,
+#   so employers can grab them from the dashboard "Download app" tab.
+#   Run on a Mac to also produce the .dmg; on Linux/Windows the .dmg is skipped.
+HUB_DATA_DIR ?= hub-data
+publish-downloads:
+	@mkdir -p $(HUB_DATA_DIR)/downloads
+	-$(MAKE) package-linux-amd64
+	-$(MAKE) package-linux-arm64
+	-$(MAKE) package-windows-amd64
+	-$(MAKE) package-windows-arm64
+	-@[ "$$(uname)" = "Darwin" ] && $(MAKE) package-macos-universal || echo "  (skipping .dmg — not on macOS)"
+	@cp -f dist/MyMonitor-Setup-* "$(HUB_DATA_DIR)/downloads/" 2>/dev/null || true
+	@cp -f dist/*.dmg "$(HUB_DATA_DIR)/downloads/" 2>/dev/null || true
+	@echo ""; echo "Published to $(HUB_DATA_DIR)/downloads:"; ls -lh "$(HUB_DATA_DIR)/downloads/" 2>/dev/null || true
 
 # ── One-time local signing certificate (keeps macOS permissions across rebuilds)
 dev-cert:
@@ -130,6 +160,19 @@ reset-permissions:
 	-tccutil reset ScreenCapture com.mymonitor.app
 	-tccutil reset Accessibility com.mymonitor.app
 	@echo "Permissions reset. Open MyMonitor and allow Screen Recording again."
+
+# ── Docker (hub server) ───────────────────────────────────────────
+docker-build:
+	docker build -t hajir-hub:latest .
+
+docker-up:
+	docker compose up -d --build
+
+docker-down:
+	docker compose down
+
+docker-logs:
+	docker compose logs -f hub
 
 # ── Clean ─────────────────────────────────────────────────────────
 clean:

@@ -424,8 +424,27 @@ func (s *Store) ScreenshotStats(deviceID int64, from, to time.Time) (int64, *tim
 	return n, nil
 }
 
-func (s *Store) OldScreenshots(before time.Time) ([]Screenshot, error) {
-	rows, err := s.db.Query(`SELECT id, path FROM screenshots WHERE captured_at < ? LIMIT 1000`, ts(before))
+const oldScreenshotBatch = 1000
+
+func (s *Store) ScreenshotCompanies() ([]int64, error) {
+	rows, err := s.db.Query(`SELECT DISTINCT company_id FROM screenshots`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		list = append(list, id)
+	}
+	return list, rows.Err()
+}
+
+func (s *Store) OldCompanyScreenshots(companyID int64, before time.Time) ([]Screenshot, error) {
+	rows, err := s.db.Query(`SELECT id, path FROM screenshots WHERE company_id = ? AND captured_at < ? ORDER BY id LIMIT ?`, companyID, ts(before), oldScreenshotBatch)
 	if err != nil {
 		return nil, err
 	}
@@ -439,6 +458,13 @@ func (s *Store) OldScreenshots(before time.Time) ([]Screenshot, error) {
 		list = append(list, sh)
 	}
 	return list, rows.Err()
+}
+
+func (s *Store) ManualByID(companyID, id int64) (ManualEntry, error) {
+	var m ManualEntry
+	err := s.db.QueryRow(`SELECT id, user_id, day, seconds, note, created_by, created_at FROM manual_entries WHERE id = ? AND company_id = ?`, id, companyID).
+		Scan(&m.ID, &m.UserID, &m.Day, &m.Seconds, &m.Note, &m.CreatedBy, &m.CreatedAt)
+	return m, err
 }
 
 func (s *Store) DeleteScreenshot(id int64) error {
@@ -471,12 +497,13 @@ type Settings struct {
 	// ScreenshotQuality is the JPEG quality (30-95). ScreenshotMaxWidth is the
 	// longest edge in pixels images are downscaled to (640-3840). Both control
 	// screenshot file size and are pushed to agents on each heartbeat.
-	ScreenshotQuality  int `json:"screenshot_quality"`
-	ScreenshotMaxWidth int `json:"screenshot_max_width"`
+	ScreenshotQuality       int `json:"screenshot_quality"`
+	ScreenshotMaxWidth      int `json:"screenshot_max_width"`
+	ScreenshotRetentionDays int `json:"screenshot_retention_days"`
 }
 
 func DefaultSettings() Settings {
-	return Settings{WorkStart: "09:00", WorkEnd: "18:00", GraceMinutes: 15, WeeklyOff: []string{"sat"}, ScreenshotIntervalSeconds: 180, ScreenshotQuality: 60, ScreenshotMaxWidth: 1920}
+	return Settings{WorkStart: "09:00", WorkEnd: "18:00", GraceMinutes: 15, WeeklyOff: []string{"sat"}, ScreenshotIntervalSeconds: 180, ScreenshotQuality: 60, ScreenshotMaxWidth: 1920, ScreenshotRetentionDays: 90}
 }
 
 func (s *Store) migrateSettings() error {
@@ -669,6 +696,9 @@ func (s *Store) GetSettings(companyID int64) Settings {
 	var raw string
 	if err := s.db.QueryRow(`SELECT data FROM company_settings WHERE company_id = ?`, companyID).Scan(&raw); err == nil {
 		json.Unmarshal([]byte(raw), &cfg)
+	}
+	if cfg.ScreenshotRetentionDays < 7 || cfg.ScreenshotRetentionDays > 365 {
+		cfg.ScreenshotRetentionDays = DefaultSettings().ScreenshotRetentionDays
 	}
 	return cfg
 }
