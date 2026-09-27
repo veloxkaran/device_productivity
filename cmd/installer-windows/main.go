@@ -28,22 +28,48 @@ const (
 )
 
 func main() {
-	if len(os.Args) > 1 {
-		switch strings.ToLower(os.Args[1]) {
+	var token, hubURL string
+	silent := false
+	for i := 1; i < len(os.Args); i++ {
+		a := os.Args[i]
+		switch strings.ToLower(a) {
 		case "--uninstall", "uninstall":
 			runUninstall()
 			return
 		case "--help", "-h":
 			printHelp()
 			return
+		case "--silent", "/silent", "-s":
+			silent = true
+		case "--token", "/token":
+			if i+1 < len(os.Args) {
+				i++
+				token = strings.TrimSpace(os.Args[i])
+			}
+		case "--hub", "/hub":
+			if i+1 < len(os.Args) {
+				i++
+				hubURL = strings.TrimSpace(os.Args[i])
+			}
+		default:
+			// also accept --token=xxx / --hub=xxx
+			if strings.HasPrefix(a, "--token=") {
+				token = strings.TrimSpace(a[len("--token="):])
+			} else if strings.HasPrefix(a, "--hub=") {
+				hubURL = strings.TrimSpace(a[len("--hub="):])
+			}
 		}
 	}
-	runInstall()
+	// A device token implies a silent, managed (covert) install.
+	if token != "" {
+		silent = true
+	}
+	runInstall(token, hubURL, silent)
 }
 
 // ── Install ────────────────────────────────────────────────────────
 
-func runInstall() {
+func runInstall(token, hubURL string, silent bool) {
 	installDir := installDirectory()
 	binPath := filepath.Join(installDir, "my-monitor.exe")
 	dataDir := filepath.Join(installDir, "data")
@@ -55,6 +81,16 @@ func runInstall() {
 	mustDo(os.MkdirAll(installDir, 0755), "create install dir")
 	mustDo(os.MkdirAll(dataDir, 0755), "create data dir")
 	mustDo(os.MkdirAll(filepath.Join(dataDir, "screenshots"), 0755), "create screenshots dir")
+	// Managed provisioning: drop the employer-issued device token so the app
+	// comes up managed (covert) on first launch — no login page, no dashboard.
+	if token != "" {
+		pf := fmt.Sprintf("{\"token\":%q,\"hub_url\":%q}", token, hubURL)
+		if err := os.WriteFile(filepath.Join(dataDir, "provision.json"), []byte(pf), 0600); err != nil {
+			warn("Could not write provision file: " + err.Error())
+		} else {
+			ok("Provisioned as managed device (no local login page)")
+		}
+	}
 	mustDo(os.WriteFile(binPath, appBinary, 0755), "write binary")
 	ok("Binary installed: " + binPath)
 
@@ -88,6 +124,10 @@ func runInstall() {
 	if err := cmd.Start(); err != nil {
 		warn("Could not start automatically: " + err.Error())
 		warn("Run manually: " + binPath)
+	} else if silent {
+		// Managed/silent install: no local web UI, so don't probe the port or
+		// open a browser.
+		ok("Started in managed mode")
 	} else {
 		for i := 0; i < 20; i++ {
 			time.Sleep(300 * time.Millisecond)
@@ -105,8 +145,10 @@ func runInstall() {
 	}
 
 	printDone()
-	fmt.Print("\n  Press Enter to close this window...")
-	fmt.Scanln()
+	if !silent {
+		fmt.Print("\n  Press Enter to close this window...")
+		fmt.Scanln()
+	}
 }
 
 func createShortcut(binPath, workDir string) {
