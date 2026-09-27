@@ -34,6 +34,11 @@ func linuxTools() []linuxTool {
 func prepare() {}
 
 func grab() (image.Image, error) {
+	// No graphical session (e.g. running before login or a disconnected
+	// session) => nothing to capture; skip quietly instead of erroring.
+	if os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
+		return nil, ErrScreenUnavailable
+	}
 	var tried []string
 	for _, t := range linuxTools() {
 		if _, err := exec.LookPath(t.name); err != nil {
