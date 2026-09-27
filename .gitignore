@@ -1,7 +1,6 @@
 # ── Build artifacts ───────────────────────────────────────────────
 my-monitor
 my-monitor.exe
-dist/
 
 # ── Installer asset placeholders (generated during packaging) ─────
 cmd/installer-linux/asset.bin
@@ -20,7 +19,6 @@ vendor/
 # ── Logs ──────────────────────────────────────────────────────────
 *.log
 hub-data/*# build & scratch artifacts
-dist/
 hub-data/
 _*.tgz
 _*.js
