@@ -3,6 +3,7 @@ package hub
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -236,13 +237,10 @@ func (s *Server) summary(d *Device, start, end time.Time) map[string]any {
 		status = d.LastStatus
 	}
 
-	entries, _ := s.store.TimeEntries(d.CompanyID, 0, nil, start, end)
+	entries, _ := s.store.TimeEntries(d.CompanyID, d.UserID, []int64{d.ID}, start, end)
 	var worked time.Duration
 	now := time.Now()
 	for _, e := range entries {
-		if e.DeviceID != d.ID {
-			continue
-		}
 		from := maxTime(e.ClockIn, start)
 		to := now
 		if e.ClockOut != nil {
@@ -528,6 +526,11 @@ func (s *Server) handleSyncBreaks(w http.ResponseWriter, r *http.Request, d *Dev
 
 func (s *Server) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 	emp, err := s.verifier.Verify(bearer(r))
+	if errors.Is(err, errActivityUnavailable) {
+		log.Printf("hub: device register: %v", err)
+		writeErr(w, http.StatusServiceUnavailable, "Hajir is temporarily unavailable. Please try again shortly.")
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, "Your Hajir session is not valid. Please sign in again.")
 		return

@@ -17,7 +17,7 @@ func (f fakeVerifier) Verify(token string) (*Employer, error) {
 	if e, ok := f[token]; ok {
 		return e, nil
 	}
-	return nil, fmt.Errorf("token rejected (401)")
+	return nil, fmt.Errorf("%w: token rejected (401)", errSessionRejected)
 }
 
 const (

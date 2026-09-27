@@ -59,6 +59,7 @@ func (s *Server) dayKey(t time.Time) string { return t.In(s.cfg.Location).Format
 func (s *Server) collect(companyID, userID int64, from, to time.Time) (statsIndex, error) {
 	ix := statsIndex{}
 	now := time.Now()
+	last := to.Add(-time.Nanosecond)
 
 	entries, err := s.store.TimeEntries(companyID, userID, nil, from, to)
 	if err != nil {
@@ -77,8 +78,8 @@ func (s *Server) collect(companyID, userID int64, from, to time.Time) (statsInde
 			inDay.FirstIn = &t
 		}
 		if e.ClockOut == nil {
-			ix.get(e.UserID, s.dayKey(minTime(now, to))).Open = true
-		} else if !e.ClockOut.After(to) {
+			ix.get(e.UserID, s.dayKey(minTime(now, last))).Open = true
+		} else if e.ClockOut.Before(to) {
 			outDay := ix.get(e.UserID, s.dayKey(*e.ClockOut))
 			if outDay.LastOut == nil || e.ClockOut.After(*outDay.LastOut) {
 				t := *e.ClockOut
@@ -100,7 +101,7 @@ func (s *Server) collect(companyID, userID int64, from, to time.Time) (statsInde
 		s.splitDays(maxTime(b.Start, from), minTime(end, to), func(day string, v float64) { ix.get(uid, day).Break += v })
 	}
 
-	manual, err := s.store.Manual(companyID, userID, s.dayKey(from), s.dayKey(to))
+	manual, err := s.store.Manual(companyID, userID, s.dayKey(from), s.dayKey(last))
 	if err != nil {
 		return nil, err
 	}
@@ -153,6 +154,52 @@ func (s *Server) members(companyID int64) ([]member, error) {
 		}
 		seen[d.UserID] = len(list)
 		list = append(list, member{UserID: d.UserID, Name: d.EmployeeName, Device: d})
+	}
+	return list, nil
+}
+
+func dayPresent(st *dayStat) bool {
+	return st != nil && (st.FirstIn != nil || st.Working() > 0)
+}
+
+func dayAbsent(workday bool, st *dayStat) bool {
+	return workday && !dayPresent(st)
+}
+
+func (s *Server) reportMembers(companyID int64, sc Scope, ix statsIndex) ([]member, error) {
+	devices, err := s.store.Devices(companyID, 0, true)
+	if err != nil {
+		return nil, err
+	}
+	latest := map[int64]*Device{}
+	names := map[int64]string{}
+	current := map[int64]bool{}
+	var order []int64
+	for _, d := range devices {
+		if _, ok := latest[d.UserID]; !ok {
+			latest[d.UserID] = d
+			order = append(order, d.UserID)
+		}
+		if names[d.UserID] == "" && strings.TrimSpace(d.EmployeeName) != "" {
+			names[d.UserID] = d.EmployeeName
+		}
+		if d.RevokedAt == nil {
+			current[d.UserID] = true
+		}
+	}
+	var orphans []int64
+	for uid := range ix {
+		if latest[uid] == nil {
+			orphans = append(orphans, uid)
+		}
+	}
+	sort.Slice(orphans, func(i, j int) bool { return orphans[i] < orphans[j] })
+	list := []member{}
+	for _, uid := range append(order, orphans...) {
+		if !sc.Allows(uid) || (!current[uid] && len(ix[uid]) == 0) {
+			continue
+		}
+		list = append(list, member{UserID: uid, Name: names[uid], Device: latest[uid]})
 	}
 	return list, nil
 }
@@ -324,7 +371,7 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, e *Emplo
 			status = m.Device.LastStatus
 		}
 		isLate := st.FirstIn != nil && st.FirstIn.After(s.lateCutoff(cfg, start))
-		isAbsent := workday && st.Working() == 0 && st.FirstIn == nil && !start.After(time.Now())
+		isAbsent := dayAbsent(workday, st) && !start.After(time.Now())
 		switch status {
 		case "active":
 			active++
@@ -492,7 +539,7 @@ func (s *Server) handleMemberDay(w http.ResponseWriter, r *http.Request, e *Empl
 	writeOK(w, "successfully fetched", map[string]any{
 		"user_id": userID, "employee_name": dev.EmployeeName, "device_name": dev.Name, "platform": dev.Platform, "app_version": dev.AppVersion,
 		"date": day, "is_today": isToday, "online": online, "status": status, "is_clocked_in": st.Open,
-		"present": st.FirstIn != nil || st.Working() > 0, "shift": shiftLabel(cfg), "late": st.FirstIn != nil && st.FirstIn.After(s.lateCutoff(cfg, start)),
+		"present": dayPresent(st), "shift": shiftLabel(cfg), "late": st.FirstIn != nil && st.FirstIn.After(s.lateCutoff(cfg, start)),
 		"clock_in": isoPtr(st.FirstIn), "clock_out": out,
 		"tracked_seconds": secs(st.Worked), "worked_seconds": secs(st.Working()), "active_seconds": secs(st.Active), "idle_seconds": secs(st.Idle),
 		"break_seconds": secs(st.Break), "manual_seconds": secs(st.Manual), "manual_entries": manualList, "idle_reports": idleReports,
@@ -576,13 +623,13 @@ func (s *Server) monthAttendance(cfg Settings, members []member, ix statsIndex, 
 		for _, m := range members {
 			st := ix[m.UserID][key]
 			a := out[m.UserID]
-			if st != nil && (st.FirstIn != nil || st.Working() > 0) {
+			if dayPresent(st) {
 				a.present++
 			}
 			if st != nil && st.FirstIn != nil && st.FirstIn.After(s.lateCutoff(cfg, d)) {
 				a.late++
 			}
-			if workday && d.Before(today) && (st == nil || st.Working() == 0) {
+			if d.Before(today) && dayAbsent(workday, st) {
 				a.absent++
 			}
 		}
@@ -600,18 +647,21 @@ func (s *Server) handleMonthly(w http.ResponseWriter, r *http.Request, e *Employ
 	prevFirst := first.AddDate(0, -1, 0)
 	sc := scopeOf(r)
 
-	cur, ix, err := s.monthMetrics(companyID, sc, first, next.Add(-time.Second))
+	cur, ix, err := s.monthMetrics(companyID, sc, first, next)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not compute report")
 		return
 	}
-	prev, _, err := s.monthMetrics(companyID, sc, prevFirst, first.Add(-time.Second))
+	prev, _, err := s.monthMetrics(companyID, sc, prevFirst, first)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not compute report")
 		return
 	}
-	members, _ := s.members(companyID)
-	members = scopeMembers(sc, members)
+	members, err := s.reportMembers(companyID, sc, ix)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not load members")
+		return
+	}
 	names := map[int64]string{}
 	for _, m := range members {
 		names[m.UserID] = m.Name
@@ -692,17 +742,16 @@ func (s *Server) handleMonthlyMembers(w http.ResponseWriter, r *http.Request, e 
 		return
 	}
 	sc := scopeOf(r)
-	cur, ix, err := s.monthMetrics(companyID, sc, first, next.Add(-time.Second))
+	cur, ix, err := s.monthMetrics(companyID, sc, first, next)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not compute report")
 		return
 	}
-	members, err := s.members(companyID)
+	members, err := s.reportMembers(companyID, sc, ix)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not load members")
 		return
 	}
-	members = scopeMembers(sc, members)
 	att := s.monthAttendance(s.store.GetSettings(companyID), members, ix, first, next, now)
 
 	type row struct {
@@ -867,6 +916,13 @@ func (s *Server) handleSaveMemberSettings(w http.ResponseWriter, r *http.Request
 	userID, _ := strconv.ParseInt(r.PathValue("user"), 10, 64)
 	if userID <= 0 {
 		writeErr(w, http.StatusUnprocessableEntity, "invalid user")
+		return
+	}
+	if devices, err := s.store.Devices(companyID, userID, true); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not load member")
+		return
+	} else if len(devices) == 0 {
+		writeErr(w, http.StatusUnprocessableEntity, "user is not a member of this company")
 		return
 	}
 	var in struct {

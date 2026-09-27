@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -331,11 +332,17 @@ func (s *Store) ScreenshotByID(id int64) (*Screenshot, error) {
 }
 
 func (s *Store) TimeEntries(companyID, userID int64, deviceIDs []int64, from, to time.Time) ([]TimeEntry, error) {
-	q := `SELECT id, device_id, user_id, clock_in, clock_out FROM time_entries WHERE company_id = ? AND clock_in <= ? AND (clock_out IS NULL OR clock_out >= ?)`
+	q := `SELECT id, device_id, user_id, clock_in, clock_out FROM time_entries WHERE company_id = ? AND clock_in < ? AND (clock_out IS NULL OR clock_out >= ?)`
 	args := []any{companyID, ts(to), ts(from)}
 	if userID > 0 {
 		q += ` AND user_id = ?`
 		args = append(args, userID)
+	}
+	if len(deviceIDs) > 0 {
+		q += ` AND device_id IN (?` + strings.Repeat(`,?`, len(deviceIDs)-1) + `)`
+		for _, id := range deviceIDs {
+			args = append(args, id)
+		}
 	}
 	q += ` ORDER BY clock_in DESC`
 	rows, err := s.db.Query(q, args...)
@@ -362,7 +369,7 @@ func (s *Store) TimeEntries(companyID, userID int64, deviceIDs []int64, from, to
 }
 
 func (s *Store) Samples(companyID, userID, deviceID int64, from, to time.Time) ([]Sample, error) {
-	q := `SELECT captured_at, is_active, idle_seconds, app_name FROM samples WHERE company_id = ? AND captured_at BETWEEN ? AND ?`
+	q := `SELECT captured_at, is_active, idle_seconds, app_name FROM samples WHERE company_id = ? AND captured_at >= ? AND captured_at < ?`
 	args := []any{companyID, ts(from), ts(to)}
 	if userID > 0 {
 		q += ` AND user_id = ?`
@@ -395,7 +402,7 @@ func (s *Store) Samples(companyID, userID, deviceID int64, from, to time.Time) (
 
 func (s *Store) Screenshots(companyID, userID int64, from, to time.Time) ([]Screenshot, error) {
 	rows, err := s.db.Query(`SELECT id, device_id, company_id, user_id, captured_at, path, size_bytes FROM screenshots
-		WHERE company_id = ? AND user_id = ? AND captured_at BETWEEN ? AND ? ORDER BY captured_at DESC`, companyID, userID, ts(from), ts(to))
+		WHERE company_id = ? AND user_id = ? AND captured_at >= ? AND captured_at < ? ORDER BY captured_at DESC`, companyID, userID, ts(from), ts(to))
 	if err != nil {
 		return nil, err
 	}
@@ -416,7 +423,7 @@ func (s *Store) Screenshots(companyID, userID int64, from, to time.Time) ([]Scre
 func (s *Store) ScreenshotStats(deviceID int64, from, to time.Time) (int64, *time.Time) {
 	var n int64
 	var last sql.NullString
-	s.db.QueryRow(`SELECT COUNT(*), MAX(captured_at) FROM screenshots WHERE device_id = ? AND captured_at BETWEEN ? AND ?`, deviceID, ts(from), ts(to)).Scan(&n, &last)
+	s.db.QueryRow(`SELECT COUNT(*), MAX(captured_at) FROM screenshots WHERE device_id = ? AND captured_at >= ? AND captured_at < ?`, deviceID, ts(from), ts(to)).Scan(&n, &last)
 	if last.Valid {
 		t := parseTS(last.String)
 		return n, &t
@@ -443,8 +450,8 @@ func (s *Store) ScreenshotCompanies() ([]int64, error) {
 	return list, rows.Err()
 }
 
-func (s *Store) OldCompanyScreenshots(companyID int64, before time.Time) ([]Screenshot, error) {
-	rows, err := s.db.Query(`SELECT id, path FROM screenshots WHERE company_id = ? AND captured_at < ? ORDER BY id LIMIT ?`, companyID, ts(before), oldScreenshotBatch)
+func (s *Store) OldCompanyScreenshots(companyID, afterID int64, before time.Time) ([]Screenshot, error) {
+	rows, err := s.db.Query(`SELECT id, path FROM screenshots WHERE company_id = ? AND id > ? AND captured_at < ? ORDER BY id LIMIT ?`, companyID, afterID, ts(before), oldScreenshotBatch)
 	if err != nil {
 		return nil, err
 	}
@@ -620,7 +627,7 @@ func (s *Store) UpsertBreak(d *Device, start time.Time, end *time.Time) error {
 }
 
 func (s *Store) Breaks(companyID, userID int64, from, to time.Time) ([]BreakRow, error) {
-	q := `SELECT user_id, start_at, end_at FROM breaks WHERE company_id = ? AND start_at <= ? AND (end_at IS NULL OR end_at >= ?)`
+	q := `SELECT user_id, start_at, end_at FROM breaks WHERE company_id = ? AND start_at < ? AND (end_at IS NULL OR end_at >= ?)`
 	args := []any{companyID, ts(to), ts(from)}
 	if userID > 0 {
 		q += ` AND user_id = ?`
@@ -855,7 +862,7 @@ func (s *Store) EffectiveScreenshotInterval(companyID, userID int64) int {
 }
 
 func (s *Store) EachSample(companyID, userID int64, from, to time.Time, fn func(SampleRow)) error {
-	q := `SELECT device_id, user_id, captured_at, is_active FROM samples WHERE company_id = ? AND captured_at BETWEEN ? AND ?`
+	q := `SELECT device_id, user_id, captured_at, is_active FROM samples WHERE company_id = ? AND captured_at >= ? AND captured_at < ?`
 	args := []any{companyID, ts(from), ts(to)}
 	if userID > 0 {
 		q += ` AND user_id = ?`
@@ -882,7 +889,7 @@ func (s *Store) EachSample(companyID, userID int64, from, to time.Time, fn func(
 }
 
 func (s *Store) CompanyScreenshots(companyID, userID int64, from, to time.Time) ([]Screenshot, error) {
-	q := `SELECT id, device_id, company_id, user_id, captured_at, path, size_bytes FROM screenshots WHERE company_id = ? AND captured_at BETWEEN ? AND ?`
+	q := `SELECT id, device_id, company_id, user_id, captured_at, path, size_bytes FROM screenshots WHERE company_id = ? AND captured_at >= ? AND captured_at < ?`
 	args := []any{companyID, ts(from), ts(to)}
 	if userID > 0 {
 		q += ` AND user_id = ?`
@@ -923,7 +930,7 @@ func (s *Store) InsertIdleReport(d *Device, start, end time.Time, reason, note s
 }
 
 func (s *Store) IdleReports(companyID, userID int64, from, to time.Time) ([]IdleReport, error) {
-	rows, err := s.db.Query(`SELECT id, start_at, end_at, reason, note FROM idle_reports WHERE company_id = ? AND user_id = ? AND start_at BETWEEN ? AND ? ORDER BY start_at`, companyID, userID, ts(from), ts(to))
+	rows, err := s.db.Query(`SELECT id, start_at, end_at, reason, note FROM idle_reports WHERE company_id = ? AND user_id = ? AND start_at >= ? AND start_at < ? ORDER BY start_at`, companyID, userID, ts(from), ts(to))
 	if err != nil {
 		return nil, err
 	}

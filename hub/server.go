@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -84,8 +85,8 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/employer/{company}/members/{user}/day", s.employer(s.handleMemberDay))
 	mux.Handle("GET /api/employer/{company}/monthly", s.employer(s.handleMonthly))
 	mux.Handle("GET /api/employer/{company}/monthly/members", s.employer(s.handleMonthlyMembers))
-	mux.Handle("POST /api/employer/{company}/members/{user}/manual", s.employer(s.handleAddManual))
-	mux.Handle("DELETE /api/employer/{company}/manual/{id}", s.employer(s.handleDeleteManual))
+	mux.Handle("POST /api/employer/{company}/members/{user}/manual", s.owner("change manual time", s.handleAddManual))
+	mux.Handle("DELETE /api/employer/{company}/manual/{id}", s.owner("change manual time", s.handleDeleteManual))
 	mux.Handle("GET /api/employer/{company}/clock", s.employer(s.handleClock))
 	mux.Handle("POST /api/employer/{company}/ws-ticket", s.employer(s.handleWSTicket))
 	mux.Handle("GET /api/employer/{company}/settings", s.employer(s.handleGetSettings))
@@ -160,8 +161,13 @@ func (s *Server) employer(h func(http.ResponseWriter, *http.Request, *Employer, 
 			return
 		}
 		emp, err := s.verifier.Verify(bearer(r))
+		if errors.Is(err, errSessionRejected) {
+			writeErr(w, http.StatusUnauthorized, "invalid or expired session")
+			return
+		}
 		if err != nil {
-			writeErr(w, http.StatusUnauthorized, err.Error())
+			log.Printf("hub: employer verify: %v", err)
+			writeErr(w, http.StatusServiceUnavailable, "activity service temporarily unavailable")
 			return
 		}
 		sc, ok := emp.Access(companyID)
@@ -197,7 +203,7 @@ func (s *Server) dayBounds(date string) (time.Time, time.Time, error) {
 		day = t
 	}
 	start := time.Date(day.Year(), day.Month(), day.Day(), 0, 0, 0, 0, s.cfg.Location)
-	return start, start.Add(24*time.Hour - time.Second), nil
+	return start, start.AddDate(0, 0, 1), nil
 }
 
 func (s *Server) sign(id int64, exp int64) string {
@@ -206,8 +212,10 @@ func (s *Server) sign(id int64, exp int64) string {
 	return hex.EncodeToString(m.Sum(nil))
 }
 
+const screenshotURLTTL = 15 * time.Minute
+
 func (s *Server) screenshotURL(id int64) string {
-	exp := time.Now().Add(30 * time.Minute).Unix()
+	exp := time.Now().Add(screenshotURLTTL).Unix()
 	return fmt.Sprintf("%s/files/screenshots/%d?exp=%d&sig=%s", s.cfg.PublicURL, id, exp, s.sign(id, exp))
 }
 
@@ -223,7 +231,7 @@ func (s *Server) handleScreenshotFile(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Cache-Control", "private, max-age=600")
+	w.Header().Set("Cache-Control", "private, no-store")
 	http.ServeFile(w, r, filepath.Join(s.cfg.DataDir, "screenshots", sh.Path))
 }
 
@@ -260,14 +268,18 @@ func (s *Server) purgeScreenshots(now time.Time) (int, error) {
 	total := 0
 	for _, companyID := range companies {
 		cutoff := now.AddDate(0, 0, -s.store.GetSettings(companyID).ScreenshotRetentionDays)
+		var afterID int64
 		for {
-			shots, err := s.store.OldCompanyScreenshots(companyID, cutoff)
+			shots, err := s.store.OldCompanyScreenshots(companyID, afterID, cutoff)
 			if err != nil {
-				return total, err
+				log.Printf("hub: screenshot purge company=%d: %v", companyID, err)
+				break
 			}
 			for _, sh := range shots {
+				afterID = sh.ID
 				if err := s.store.DeleteScreenshot(sh.ID); err != nil {
-					return total, err
+					log.Printf("hub: screenshot purge id=%d: %v", sh.ID, err)
+					continue
 				}
 				s.removeScreenshotFile(sh.Path)
 				total++

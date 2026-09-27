@@ -81,6 +81,10 @@ func main() {
 	// menu-bar item. Detect this before building any UI.
 	managed := web.Provision(mgr)
 
+	// Keep this device on the latest published version (checks the hub
+	// periodically; applies silently when idle). See cloud/update.go.
+	cloud.StartAutoUpdate(mgr.Config())
+
 	// Start automatically at every login (essential for the hidden/managed app,
 	// which has no visible way to relaunch after a restart).
 	ensureAutostart(managed)

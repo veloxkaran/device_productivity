@@ -113,6 +113,8 @@ main{padding:18px 16px 14px}
 .choice:hover{border-color:var(--brand);background:var(--soft)}
 .choice-t{display:block;font-weight:600;font-size:13.5px;margin-bottom:2px}
 .choice-d{display:block;font-size:11.5px;color:var(--mute);line-height:1.4}
+.choice.rec{border-color:var(--brand);background:var(--soft)}
+.choice .rec-badge{float:right;font-size:10px;font-weight:700;color:var(--brand);border:1px solid var(--brand);border-radius:999px;padding:1px 7px;letter-spacing:.02em}
 </style>
 </head>
 <body>
@@ -132,13 +134,14 @@ main{padding:18px 16px 14px}
     <section class="view" id="vSetup">
       <p style="font-weight:600;font-size:14px;margin:2px 0 3px">Set up this computer</p>
       <p class="sub" style="margin-bottom:14px;font-size:12px">Choose how this device will be tracked. You only do this once.</p>
+      <button type="button" class="choice rec" id="chAuto">
+        <span class="rec-badge">Recommended</span>
+        <span class="choice-t">Automatic (managed)</span>
+        <span class="choice-d">Company device. Connects with a device token and tracks in the background — no sign in and no menu-bar icon.</span>
+      </button>
       <button type="button" class="choice" id="chManual">
         <span class="choice-t">Manual</span>
         <span class="choice-d">The person signs in and starts &amp; stops tracking themselves. A Hajir icon stays in the menu bar.</span>
-      </button>
-      <button type="button" class="choice" id="chAuto">
-        <span class="choice-t">Automatic (managed)</span>
-        <span class="choice-d">Company device. Connects with a device token and tracks in the background — no sign in and no menu-bar icon.</span>
       </button>
       <div class="foot"><span id="verSetup">Version</span><a href="#" id="lnkQuitS">Quit</a></div>
     </section>
@@ -188,11 +191,11 @@ main{padding:18px 16px 14px}
         <div><button type="button" id="btnPerm">Open Settings</button></div>
       </div>
       <div class="center" style="margin-top:22px">
-        <span class="pill-date" id="date">—</span>
+        <span class="pill-date" id="date" style="display:none">—</span>
         <div class="timer" id="timer">00: 00: 00</div>
-        <div class="sub" id="trackSub"></div>
+        <div class="sub" id="trackSub" style="display:none"></div>
         <div class="act">
-          <button class="pill" id="btnToggle"><span class="dot" id="toggleIco"></span><span id="toggleTxt">Start Tracking</span></button>
+          <button class="pill" id="btnToggle"><span class="dot" id="toggleIco"></span><span id="toggleTxt">Start</span></button>
           <button class="pill sm" id="btnBreak">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v2M14 2v2M6 2v2M17 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/></svg>
             <span id="breakTxt">Break</span>
@@ -203,8 +206,8 @@ main{padding:18px 16px 14px}
           <span>Automatic tracking is on — managed by your workspace.</span>
         </div>
       </div>
-      <div class="card" style="margin-top:auto">
-        <div class="card-body">
+      <div class="card" style="margin-top:auto;background:transparent;border:0">
+        <div class="card-body" style="display:none">
           <div style="min-width:0">
             <p class="hello">Hello, <b id="uName">—</b></p>
             <p class="company" id="uCompany">—</p>
@@ -212,7 +215,7 @@ main{padding:18px 16px 14px}
           <div class="avatar" id="uAvatar">?</div>
         </div>
         <div class="shot" id="shotStatus"></div>
-        <div class="card-foot"><span id="verTrack">version</span><span class="badge-live" id="live"><i></i><span>Synced</span></span><a href="#" class="link" id="lnkQuit" style="font-size:12px">Quit</a></div>
+        <div class="card-foot" style="border-top:0;justify-content:flex-end"><span id="verTrack" style="display:none">version</span><span class="badge-live" id="live" style="display:none"><i></i><span>Synced</span></span><a href="#" class="link" id="lnkQuit" style="font-size:12px">Quit</a></div>
       </div>
     </section>
 
@@ -314,7 +317,7 @@ main{padding:18px 16px 14px}
       tBtn.style.display = '';
       tBtn.classList.toggle('stop', S.clocked_in);
       $('toggleIco').innerHTML = S.clocked_in ? PAUSE : PLAY;
-      $('toggleTxt').textContent = S.clocked_in ? 'Stop Tracking' : 'Start Tracking';
+      $('toggleTxt').textContent = S.clocked_in ? 'Stop' : 'Start';
       b.style.display = S.clocked_in ? '' : 'none';
     }
     b.classList.toggle('brk-on', S.on_break);

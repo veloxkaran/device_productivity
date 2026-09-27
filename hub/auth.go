@@ -2,6 +2,7 @@ package hub
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -42,6 +43,11 @@ func (c *EmployerCompany) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+var (
+	errSessionRejected     = errors.New("invalid or expired session")
+	errActivityUnavailable = errors.New("activity service temporarily unavailable")
+)
+
 type EmployerVerifier interface {
 	Verify(token string) (*Employer, error)
 }
@@ -65,7 +71,7 @@ func NewVerifier(apiURL string) *Verifier {
 func (v *Verifier) Verify(token string) (*Employer, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return nil, fmt.Errorf("missing token")
+		return nil, fmt.Errorf("%w: missing token", errSessionRejected)
 	}
 	key := hashToken(token)
 	v.mu.Lock()
@@ -75,16 +81,19 @@ func (v *Verifier) Verify(token string) (*Employer, error) {
 	}
 	v.mu.Unlock()
 
-	req, _ := http.NewRequest(http.MethodGet, v.apiURL+"/chat/verify-token", nil)
+	req, _ := http.NewRequest(http.MethodGet, v.apiURL+"/chat/verify-token?include=activity", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 	resp, err := v.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("hajir api unreachable: %w", err)
+		return nil, fmt.Errorf("%w: hajir api unreachable: %v", errActivityUnavailable, err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("%w: token rejected (%d)", errSessionRejected, resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("token rejected (%d)", resp.StatusCode)
+		return nil, fmt.Errorf("%w: hajir api returned %d", errActivityUnavailable, resp.StatusCode)
 	}
 	var body struct {
 		Data struct {
@@ -96,7 +105,7 @@ func (v *Verifier) Verify(token string) (*Employer, error) {
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return nil, fmt.Errorf("bad verify response: %w", err)
+		return nil, fmt.Errorf("%w: bad verify response: %v", errActivityUnavailable, err)
 	}
 	e := &Employer{UserID: body.Data.User.ID, Name: body.Data.User.Name, Companies: map[int64]EmployerCompany{}}
 	for _, c := range body.Data.Companies {

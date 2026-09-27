@@ -14,7 +14,7 @@ set -euo pipefail
 APP_NAME="MyMonitor"
 DISPLAY_NAME="My Monitor"
 BINARY_NAME="my-monitor"
-VERSION="2.0.0"
+VERSION="2.1.0"
 BUNDLE_ID="com.hajir.tracker"
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
 if [[ -z "$SIGN_IDENTITY" ]] && security find-identity -v -p codesigning 2>/dev/null | grep -q "Hajir Local Signing"; then

@@ -22,6 +22,8 @@ type client struct {
 	scope Scope
 }
 
+var wsMaxLifetime = 10 * time.Minute
+
 func NewBroker() *Broker { return &Broker{rooms: map[int64]map[*client]struct{}{}} }
 
 func (b *Broker) Publish(companyID, userID int64, event string, payload any) {
@@ -78,6 +80,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c := &client{conn: conn, send: make(chan []byte, 64), scope: scope}
+	lifetime := time.NewTimer(wsMaxLifetime)
 	done := make(chan struct{})
 	s.broker.join(companyID, c)
 	log.Printf("hub: ws joined company=%d user=%d", companyID, userID)
@@ -101,6 +104,7 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		ping := time.NewTicker(30 * time.Second)
 		defer ping.Stop()
+		defer lifetime.Stop()
 		hello, _ := json.Marshal(map[string]any{"event": "connected", "data": map[string]any{"company_id": companyID}})
 		c.send <- hello
 		for {
@@ -113,6 +117,10 @@ func (s *Server) handleWS(w http.ResponseWriter, r *http.Request) {
 					conn.Close()
 					return
 				}
+			case <-lifetime.C:
+				conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "session expired, reconnect"), time.Now().Add(5*time.Second))
+				conn.Close()
+				return
 			case <-ping.C:
 				conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 				if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
