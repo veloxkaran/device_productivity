@@ -19,4 +19,12 @@ vendor/
 
 # ── Logs ──────────────────────────────────────────────────────────
 *.log
-hub-data/*
+hub-data/*# build & scratch artifacts
+dist/
+hub-data/
+_*.tgz
+_*.js
+_to_delete*
+*.dmg
+my-monitor
+my-monitor.exe
