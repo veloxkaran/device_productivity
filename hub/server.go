@@ -359,6 +359,12 @@ func (s *Server) handleDownloads(w http.ResponseWriter, r *http.Request, e *Empl
 		if strings.HasPrefix(name, ".") {
 			continue
 		}
+		// Hide auto-update assets: the raw update binaries (my-monitor-*) and
+		// the update manifest are downloaded by the app itself, not by people.
+		low := strings.ToLower(name)
+		if strings.HasPrefix(low, "my-monitor-") || strings.HasSuffix(low, ".json") {
+			continue
+		}
 		info, err := en.Info()
 		if err != nil {
 			continue

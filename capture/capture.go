@@ -2,6 +2,7 @@ package capture
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"image"
 	"image/draw"
@@ -16,6 +17,11 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+// ErrScreenUnavailable means there is no interactive screen to capture right
+// now (locked, secure desktop, display off, disconnected session). It is a
+// normal state, so it is skipped silently and not reported as a failure.
+var ErrScreenUnavailable = errors.New("screen unavailable")
 
 const (
 	screenshotsDir     = "data/screenshots"
@@ -174,6 +180,10 @@ func take(db *storage.DB) bool {
 	now := time.Now()
 	final := filepath.Join(screenshotsDir, fmt.Sprintf("screenshot_%s.jpg", now.Format("20060102_150405")))
 	if err := captureTo(final); err != nil {
+		if errors.Is(err, ErrScreenUnavailable) {
+			clearError()
+			return false
+		}
 		setError(err)
 		return false
 	}
@@ -193,6 +203,13 @@ func take(db *storage.DB) bool {
 		go cb()
 	}
 	return true
+}
+
+func clearError() {
+	statusMu.Lock()
+	status.LastError = ""
+	status.LastErrorAt = nil
+	statusMu.Unlock()
 }
 
 func setError(err error) {
