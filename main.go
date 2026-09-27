@@ -125,9 +125,10 @@ func printStartBanner(firstRun bool) {
 	fmt.Printf("  │  Cloud Setup   →  http://localhost:8090/cloud│\n")
 	if firstRun {
 		fmt.Println("  │  Setup         →  http://localhost:8090/setup│")
-		fmt.Println("  │  Login         →  admin / admin              │")
+		fmt.Println("  │  Login user    →  admin                      │")
+		fmt.Println("  │  Password saved → data/admin-credentials.txt │")
 		fmt.Println("  ├──────────────────────────────────────────────┤")
-		fmt.Println("  │  ⚠  Change default password in Setup!        │")
+		fmt.Println("  │  ⚠  Change it in Setup, then delete the file │")
 	}
 	fmt.Println("  └──────────────────────────────────────────────┘")
 	fmt.Println("")
