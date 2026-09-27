@@ -95,7 +95,13 @@ func main() {
 		go openAppWindow("http://127.0.0.1:8090/app")
 	}
 
-	go web.Start(db, mgr, "127.0.0.1:8090")
+	// Managed (covert) devices expose NO local web UI: no port 8090, no login
+	// page, no dashboard an employee can open. Cloud sync + heartbeat run
+	// independently (started in cloud.Manager.Apply via Provision), so
+	// reporting is unaffected. Interactive installs keep the local UI.
+	if !managed {
+		go web.Start(db, mgr, "127.0.0.1:8090")
+	}
 	runUI(func() { go openAppWindow("http://127.0.0.1:8090/app") }, web.Quit, managed)
 }
 
