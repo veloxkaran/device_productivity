@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const AppVersion = "2.1.1"
+const AppVersion = "2.1.2"
 
 func (s *Syncer) heartbeatLoop(interval time.Duration, stop <-chan struct{}) {
 	t := time.NewTicker(interval)
