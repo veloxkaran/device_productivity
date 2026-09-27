@@ -86,10 +86,15 @@ func grab() (image.Image, error) {
 	}
 	defer procDeleteObject.Call(hBmp)
 
-	procSelectObject.Call(memDC, hBmp)
+	prevObj, _, _ := procSelectObject.Call(memDC, hBmp)
 	ret, _, _ := procBitBlt.Call(memDC, 0, 0, uintptr(width), uintptr(height), screenDC, uintptr(originX), uintptr(originY), srcCopy|captureBlt)
 	if ret == 0 {
 		return nil, fmt.Errorf("BitBlt failed")
+	}
+	// GetDIBits fails if the bitmap is still selected into a DC — restore the
+	// DC's previous bitmap first so hBmp is free to read.
+	if prevObj != 0 {
+		procSelectObject.Call(memDC, prevObj)
 	}
 
 	bi := bitmapInfo{
@@ -103,7 +108,7 @@ func grab() (image.Image, error) {
 	}
 	pixels := make([]byte, width*height*4)
 	r, _, _ := procGetDIBits.Call(
-		memDC, hBmp, 0, uintptr(height),
+		screenDC, hBmp, 0, uintptr(height),
 		uintptr(unsafe.Pointer(&pixels[0])),
 		uintptr(unsafe.Pointer(&bi)),
 		dibRGBColors,
@@ -121,7 +126,7 @@ func grab() (image.Image, error) {
 			img.Pix[pi+0] = pixels[i+2] // R
 			img.Pix[pi+1] = pixels[i+1] // G
 			img.Pix[pi+2] = pixels[i+0] // B
-			img.Pix[pi+3] = 255          // A
+			img.Pix[pi+3] = 255         // A
 		}
 	}
 

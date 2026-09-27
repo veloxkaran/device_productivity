@@ -13,7 +13,7 @@ import (
 // opens the tracker window, right-click shows Open / Quit. Managed (covert)
 // devices create no tray icon and stay hidden.
 
-const nativeWindow = false
+const nativeWindow = true
 
 var (
 	moduser32   = syscall.NewLazyDLL("user32.dll")

@@ -161,6 +161,27 @@ reset-permissions:
 	-tccutil reset Accessibility com.mymonitor.app
 	@echo "Permissions reset. Open MyMonitor and allow Screen Recording again."
 
+# ── Windows NSIS wizard installer ─────────────────────────────────
+#   Requires makensis (Linux/mac: `apt install nsis` / `brew install nsis`).
+#   Produces a proper setup wizard with Add/Remove Programs + uninstaller.
+#     make installer-windows-nsis HUB_URL=https://monitor.veloxlabs.net HAJIR_API_URL=https://dev.veloxlabs.net/api/v2 VERSION=2.1.0
+VERSION ?= 2.1.0
+installer-windows-nsis: deps
+	@mkdir -p dist
+	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="$(LDFLAGS) -H windowsgui" -o dist/MyMonitor.exe .
+	makensis -DVERSION=$(VERSION) -DSRCEXE=$(CURDIR)/dist/MyMonitor.exe -DOUTFILE=MyMonitor-Setup-windows-amd64.exe installer-nsis/installer.nsi
+	mv -f MyMonitor-Setup-windows-amd64.exe dist/ 2>/dev/null || true
+	rm -f dist/MyMonitor.exe
+	@echo ""; echo "  Installer: dist/MyMonitor-Setup-windows-amd64.exe"
+
+installer-windows-arm64-nsis: deps
+	@mkdir -p dist
+	GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="$(LDFLAGS) -H windowsgui" -o dist/MyMonitor.exe .
+	makensis -DVERSION=$(VERSION) -DSRCEXE=$(CURDIR)/dist/MyMonitor.exe -DOUTFILE=MyMonitor-Setup-windows-arm64.exe installer-nsis/installer.nsi
+	mv -f MyMonitor-Setup-windows-arm64.exe dist/ 2>/dev/null || true
+	rm -f dist/MyMonitor.exe
+	@echo ""; echo "  Installer: dist/MyMonitor-Setup-windows-arm64.exe"
+
 # ── Docker (hub server) ───────────────────────────────────────────
 docker-build:
 	docker build -t hajir-hub:latest .
