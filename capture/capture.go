@@ -143,36 +143,24 @@ func StartCapture(db *storage.DB, initial time.Duration) {
 		return
 	}
 	prepare()
-	var lastShotApp string
 	t := time.NewTicker(currentInterval())
 	defer t.Stop()
 	for {
-		forced := false
 		select {
 		case <-t.C:
 		case <-intervalCh:
 			t.Reset(currentInterval())
 			continue
 		case <-nowCh:
-			forced = true
 			time.Sleep(2 * time.Second)
 			t.Reset(currentInterval())
 		}
 		if !monitor.IsClockedIn() || monitor.IsOnBreak() || !monitor.TrackingEnabled() {
 			continue
 		}
-		// CPU/storage saver: if the foreground app is unchanged AND there has been
-		// no input for the whole interval, the screen almost certainly looks the
-		// same, so skip this capture. A forced TakeNow() (start / end-break) still
-		// captures because it resets lastShotApp below via the manual path.
-		st := monitor.CurrentStatus()
-		ivl := int64(currentInterval() / time.Second)
-		if !forced && lastShotApp != "" && st.AppName == lastShotApp && st.IdleSeconds >= ivl {
-			continue
-		}
-		if take(db) {
-			lastShotApp = st.AppName
-		}
+		// Capture on every tick so the timeline matches the configured interval,
+		// even when the member is idle in the same app.
+		take(db)
 	}
 }
 
