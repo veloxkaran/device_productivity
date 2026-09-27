@@ -13,6 +13,8 @@ import (
 	"my-monitor/storage"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -87,12 +89,43 @@ var (
 	intervalCh = make(chan struct{}, 1)
 )
 
-const minInterval = 30 * time.Second
+const (
+	minInterval = 30 * time.Second
+	maxInterval = time.Hour
+	// Last interval the employer configured, so a restart uses it straight
+	// away instead of the built-in default until the first heartbeat.
+	intervalFile = "data/screenshot_interval"
+)
+
+func loadSavedInterval() time.Duration {
+	b, err := os.ReadFile(intervalFile)
+	if err != nil {
+		return 0
+	}
+	secs, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil {
+		return 0
+	}
+	d := time.Duration(secs) * time.Second
+	if d < minInterval || d > maxInterval {
+		return 0
+	}
+	return d
+}
+
+func saveInterval(d time.Duration) {
+	if err := os.WriteFile(intervalFile, []byte(strconv.Itoa(int(d/time.Second))), 0644); err != nil {
+		log.Printf("capture: cannot persist interval: %v", err)
+	}
+}
 
 // SetInterval changes the screenshot interval at runtime (e.g. from employer settings).
 func SetInterval(d time.Duration) {
 	if d < minInterval {
 		d = minInterval
+	}
+	if d > maxInterval {
+		d = maxInterval
 	}
 	intervalMu.Lock()
 	changed := d != interval
@@ -100,6 +133,7 @@ func SetInterval(d time.Duration) {
 	intervalMu.Unlock()
 	if changed {
 		log.Printf("capture: interval set to %s", d)
+		saveInterval(d)
 		select {
 		case intervalCh <- struct{}{}:
 		default:
@@ -135,7 +169,11 @@ func TakeNow() {
 func StartCapture(db *storage.DB, initial time.Duration) {
 	intervalMu.Lock()
 	if interval == 0 {
-		interval = initial
+		if saved := loadSavedInterval(); saved > 0 {
+			interval = saved
+		} else {
+			interval = initial
+		}
 	}
 	intervalMu.Unlock()
 	if err := os.MkdirAll(screenshotsDir, 0755); err != nil {
@@ -143,18 +181,35 @@ func StartCapture(db *storage.DB, initial time.Duration) {
 		return
 	}
 	prepare()
-	t := time.NewTicker(currentInterval())
-	defer t.Stop()
+	// Schedule from the last attempt rather than a fixed ticker, so an interval
+	// change applies to the wait already in progress: shortening it past the
+	// time already elapsed captures right away, lengthening it extends the wait.
+	last := time.Now()
+	timer := time.NewTimer(currentInterval())
+	defer timer.Stop()
+	rearm := func(d time.Duration) {
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+		if d < 0 {
+			d = 0
+		}
+		timer.Reset(d)
+	}
 	for {
 		select {
-		case <-t.C:
+		case <-timer.C:
 		case <-intervalCh:
-			t.Reset(currentInterval())
+			rearm(time.Until(last.Add(currentInterval())))
 			continue
 		case <-nowCh:
 			time.Sleep(2 * time.Second)
-			t.Reset(currentInterval())
 		}
+		last = time.Now()
+		rearm(currentInterval())
 		if !monitor.IsClockedIn() || monitor.IsOnBreak() || !monitor.TrackingEnabled() {
 			continue
 		}
