@@ -806,6 +806,12 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, r *http.Request, e *Em
 }
 
 func (s *Server) handleSaveSettings(w http.ResponseWriter, r *http.Request, e *Employer, companyID int64) {
+	// Company-wide settings reach every member, so a manager limited to some
+	// departments/people may not change them even with the edit permission.
+	if scopeOf(r).Scoped() {
+		writeErr(w, http.StatusForbidden, "company settings can only be changed by someone with access to the whole company")
+		return
+	}
 	var in Settings
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<14)).Decode(&in); err != nil {
 		writeErr(w, http.StatusUnprocessableEntity, "invalid JSON")
@@ -916,6 +922,9 @@ func (s *Server) handleSaveMemberSettings(w http.ResponseWriter, r *http.Request
 	userID, _ := strconv.ParseInt(r.PathValue("user"), 10, 64)
 	if userID <= 0 {
 		writeErr(w, http.StatusUnprocessableEntity, "invalid user")
+		return
+	}
+	if denyMember(w, r, userID) {
 		return
 	}
 	if devices, err := s.store.Devices(companyID, userID, true); err != nil {

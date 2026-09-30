@@ -75,24 +75,24 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("POST /api/device/register", s.handleDeviceRegister)
 
 	mux.Handle("GET /api/employer/{company}/devices", s.employer(s.handleDevices))
-	mux.Handle("POST /api/employer/{company}/devices", s.owner("manage devices", s.handleCreateDevice))
-	mux.Handle("DELETE /api/employer/{company}/devices/{id}", s.owner("manage devices", s.handleRevokeDevice))
+	mux.Handle("POST /api/employer/{company}/devices", s.can(actAdd, "add devices", s.handleCreateDevice))
+	mux.Handle("DELETE /api/employer/{company}/devices/{id}", s.can(actDelete, "remove devices", s.handleRevokeDevice))
 	mux.Handle("GET /api/employer/{company}/time-entries", s.employer(s.handleTimeEntries))
 	mux.Handle("GET /api/employer/{company}/timeline", s.employer(s.handleTimeline))
 	mux.Handle("GET /api/employer/{company}/screenshots", s.employer(s.handleScreenshots))
-	mux.Handle("DELETE /api/employer/{company}/screenshots/{id}", s.owner("delete screenshots", s.handleDeleteScreenshot))
+	mux.Handle("DELETE /api/employer/{company}/screenshots/{id}", s.can(actDelete, "delete screenshots", s.handleDeleteScreenshot))
 	mux.Handle("GET /api/employer/{company}/overview", s.employer(s.handleOverview))
 	mux.Handle("GET /api/employer/{company}/members/{user}/day", s.employer(s.handleMemberDay))
 	mux.Handle("GET /api/employer/{company}/monthly", s.employer(s.handleMonthly))
 	mux.Handle("GET /api/employer/{company}/monthly/members", s.employer(s.handleMonthlyMembers))
-	mux.Handle("POST /api/employer/{company}/members/{user}/manual", s.owner("change manual time", s.handleAddManual))
-	mux.Handle("DELETE /api/employer/{company}/manual/{id}", s.owner("change manual time", s.handleDeleteManual))
+	mux.Handle("POST /api/employer/{company}/members/{user}/manual", s.can(actAdd, "add manual time", s.handleAddManual))
+	mux.Handle("DELETE /api/employer/{company}/manual/{id}", s.can(actDelete, "delete manual time", s.handleDeleteManual))
 	mux.Handle("GET /api/employer/{company}/clock", s.employer(s.handleClock))
 	mux.Handle("POST /api/employer/{company}/ws-ticket", s.employer(s.handleWSTicket))
 	mux.Handle("GET /api/employer/{company}/settings", s.employer(s.handleGetSettings))
-	mux.Handle("PUT /api/employer/{company}/settings", s.owner("change company settings", s.handleSaveSettings))
+	mux.Handle("PUT /api/employer/{company}/settings", s.can(actEdit, "change company settings", s.handleSaveSettings))
 	mux.Handle("GET /api/employer/{company}/members/{user}/settings", s.employer(s.handleGetMemberSettings))
-	mux.Handle("PUT /api/employer/{company}/members/{user}/settings", s.owner("change member settings", s.handleSaveMemberSettings))
+	mux.Handle("PUT /api/employer/{company}/members/{user}/settings", s.can(actEdit, "change member settings", s.handleSaveMemberSettings))
 
 	mux.Handle("GET /api/employer/{company}/downloads", s.employer(s.handleDownloads))
 	mux.HandleFunc("GET /downloads/{name}", s.handleDownloadFile)
@@ -101,7 +101,7 @@ func (s *Server) routes() http.Handler {
 	mux.HandleFunc("GET /files/screenshots/{id}", s.handleScreenshotFile)
 	mux.HandleFunc("GET /ws", s.handleWS)
 
-	return s.cors(mux)
+	return s.cors(s.etagJSON(mux))
 }
 
 func (s *Server) originAllowed(origin string) bool {

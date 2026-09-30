@@ -323,6 +323,10 @@ func (s *Server) handleCreateDevice(w http.ResponseWriter, r *http.Request, e *E
 		writeErr(w, http.StatusUnprocessableEntity, "user_id is required")
 		return
 	}
+	// A department-scoped manager may add devices only for their own people.
+	if denyMember(w, r, in.UserID) {
+		return
+	}
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
 		name = strings.TrimSpace(in.EmployeeName + " device")
@@ -340,6 +344,18 @@ func (s *Server) handleCreateDevice(w http.ResponseWriter, r *http.Request, e *E
 
 func (s *Server) handleRevokeDevice(w http.ResponseWriter, r *http.Request, e *Employer, companyID int64) {
 	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	// Scope check before revoking: look the device up, then refuse anyone
+	// outside the viewer's people (owners pass, as before).
+	if !scopeOf(r).IsOwner {
+		d, err := s.store.DeviceByID(id)
+		if err != nil || d.CompanyID != companyID {
+			writeErr(w, http.StatusNotFound, "device not found")
+			return
+		}
+		if denyMember(w, r, d.UserID) {
+			return
+		}
+	}
 	ok, err := s.store.RevokeDevice(companyID, id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not revoke device")
@@ -643,6 +659,9 @@ func (s *Server) handleDeleteScreenshot(w http.ResponseWriter, r *http.Request, 
 	sh, err := s.store.ScreenshotByID(id)
 	if id <= 0 || err != nil || sh.CompanyID != companyID {
 		writeErr(w, http.StatusNotFound, "screenshot not found")
+		return
+	}
+	if denyMember(w, r, sh.UserID) {
 		return
 	}
 	if err := s.store.DeleteScreenshot(sh.ID); err != nil {

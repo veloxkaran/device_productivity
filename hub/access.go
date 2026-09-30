@@ -14,6 +14,34 @@ import (
 type Scope struct {
 	IsOwner   bool
 	MemberIDs map[int64]bool
+	// What this viewer may change. The owner always may; anyone else only
+	// with the matching Laravel permission.
+	CanAdd    bool
+	CanEdit   bool
+	CanDelete bool
+}
+
+type activityAction string
+
+const (
+	actAdd    activityAction = "add"
+	actEdit   activityAction = "edit"
+	actDelete activityAction = "delete"
+)
+
+func (sc Scope) May(a activityAction) bool {
+	if sc.IsOwner {
+		return true
+	}
+	switch a {
+	case actAdd:
+		return sc.CanAdd
+	case actEdit:
+		return sc.CanEdit
+	case actDelete:
+		return sc.CanDelete
+	}
+	return false
 }
 
 func (sc Scope) Allows(userID int64) bool {
@@ -47,6 +75,18 @@ func (s *Server) owner(action string, h func(http.ResponseWriter, *http.Request,
 	return s.employer(func(w http.ResponseWriter, r *http.Request, e *Employer, companyID int64) {
 		if !scopeOf(r).IsOwner {
 			writeErr(w, http.StatusForbidden, "only the company owner can "+action)
+			return
+		}
+		h(w, r, e, companyID)
+	})
+}
+
+// can gates a write on the matching activity permission (add / edit / delete)
+// instead of ownership. Member-level scope is still enforced in the handler.
+func (s *Server) can(a activityAction, action string, h func(http.ResponseWriter, *http.Request, *Employer, int64)) http.Handler {
+	return s.employer(func(w http.ResponseWriter, r *http.Request, e *Employer, companyID int64) {
+		if !scopeOf(r).May(a) {
+			writeErr(w, http.StatusForbidden, "you do not have permission to "+action)
 			return
 		}
 		h(w, r, e, companyID)

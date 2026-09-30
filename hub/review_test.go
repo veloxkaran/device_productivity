@@ -20,12 +20,13 @@ func TestManualTimeIsOwnerOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, c := range [][2]string{
-		{"POST", "/api/employer/1/members/101/manual"},
-		{"DELETE", fmt.Sprintf("/api/employer/1/manual/%d", id)},
+	// A viewer with no add/delete grant is refused; the owner holds every grant.
+	for _, c := range [][3]string{
+		{"POST", "/api/employer/1/members/101/manual", "you do not have permission to add manual time"},
+		{"DELETE", fmt.Sprintf("/api/employer/1/manual/%d", id), "you do not have permission to delete manual time"},
 	} {
 		r := call(t, s, c[0], "viewer", c[1], `{"date":"2026-01-05","minutes":10}`)
-		if r.code != 403 || r.body["message"] != "only the company owner can change manual time" {
+		if r.code != 403 || r.body["message"] != c[2] {
 			t.Fatalf("%s %s gave %d %v", c[0], c[1], r.code, r.body["message"])
 		}
 	}

@@ -22,6 +22,11 @@ type EmployerCompany struct {
 	IsOwner           bool    `json:"is_owner"`
 	CanViewActivity   bool    `json:"can_view_activity"`
 	ActivityMemberIDs []int64 `json:"activity_member_ids"`
+	// Per-action grants from Laravel ("add/edit/delete device activity").
+	// Absent (an older API) means owner-only, exactly the previous rule.
+	CanAddActivity    bool `json:"can_add_activity"`
+	CanEditActivity   bool `json:"can_edit_activity"`
+	CanDeleteActivity bool `json:"can_delete_activity"`
 }
 
 func (c *EmployerCompany) UnmarshalJSON(b []byte) error {
@@ -31,6 +36,9 @@ func (c *EmployerCompany) UnmarshalJSON(b []byte) error {
 		IsOwner           bool    `json:"is_owner"`
 		CanViewActivity   *bool   `json:"can_view_activity"`
 		ActivityMemberIDs []int64 `json:"activity_member_ids"`
+		CanAddActivity    *bool   `json:"can_add_activity"`
+		CanEditActivity   *bool   `json:"can_edit_activity"`
+		CanDeleteActivity *bool   `json:"can_delete_activity"`
 	}
 	if err := json.Unmarshal(b, &raw); err != nil {
 		return err
@@ -40,6 +48,15 @@ func (c *EmployerCompany) UnmarshalJSON(b []byte) error {
 	if raw.CanViewActivity != nil {
 		c.CanViewActivity = *raw.CanViewActivity
 	}
+	pick := func(v *bool) bool {
+		if v == nil {
+			return raw.IsOwner
+		}
+		return *v
+	}
+	c.CanAddActivity = pick(raw.CanAddActivity)
+	c.CanEditActivity = pick(raw.CanEditActivity)
+	c.CanDeleteActivity = pick(raw.CanDeleteActivity)
 	return nil
 }
 
@@ -136,14 +153,16 @@ func (e *Employer) Access(companyID int64) (Scope, bool) {
 		return Scope{}, false
 	}
 	if c.IsOwner {
-		return Scope{IsOwner: true}, true
+		return Scope{IsOwner: true, CanAdd: true, CanEdit: true, CanDelete: true}, true
 	}
+	grants := Scope{CanAdd: c.CanAddActivity, CanEdit: c.CanEditActivity, CanDelete: c.CanDeleteActivity}
 	if c.ActivityMemberIDs == nil {
-		return Scope{}, true
+		return grants, true
 	}
 	ids := make(map[int64]bool, len(c.ActivityMemberIDs))
 	for _, id := range c.ActivityMemberIDs {
 		ids[id] = true
 	}
-	return Scope{MemberIDs: ids}, true
+	grants.MemberIDs = ids
+	return grants, true
 }

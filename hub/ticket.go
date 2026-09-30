@@ -62,5 +62,8 @@ func (s *Server) handleClock(w http.ResponseWriter, r *http.Request, e *Employer
 	now := time.Now().In(s.cfg.Location)
 	sc := scopeOf(r)
 	writeOK(w, "clock", map[string]any{"timezone": s.cfg.Location.String(), "today": now.Format("2006-01-02"), "now": now.Format(time.RFC3339),
-		"access": map[string]any{"is_owner": sc.IsOwner, "can_manage": sc.IsOwner, "scoped": sc.Scoped()}})
+		"access": map[string]any{"is_owner": sc.IsOwner, "scoped": sc.Scoped(),
+			"can_add": sc.May(actAdd), "can_edit": sc.May(actEdit), "can_delete": sc.May(actDelete),
+			// kept for older dashboards: true when any change is allowed
+			"can_manage": sc.May(actAdd) || sc.May(actEdit) || sc.May(actDelete)}})
 }

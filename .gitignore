@@ -26,3 +26,5 @@ _to_delete*
 *.dmg
 my-monitor
 my-monitor.exe
+
+.env

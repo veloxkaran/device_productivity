@@ -36,6 +36,8 @@ func newFixture(t *testing.T) *Server {
 	os.MkdirAll(filepath.Join(dir, "screenshots"), 0755)
 	var viewerCompany EmployerCompany
 	json.Unmarshal([]byte(`{"id":1,"name":"A","is_owner":false,"can_view_activity":true,"activity_member_ids":[101,102]}`), &viewerCompany)
+	var managerCompany EmployerCompany
+	json.Unmarshal([]byte(`{"id":1,"name":"A","is_owner":false,"can_view_activity":true,"activity_member_ids":[101,102],"can_add_activity":true,"can_edit_activity":true,"can_delete_activity":true}`), &managerCompany)
 	return &Server{
 		cfg:    Config{Secret: []byte("s"), Location: time.UTC, DataDir: dir, OnlineThreshold: 90 * time.Second, PublicURL: "http://hub"},
 		store:  store,
@@ -44,6 +46,8 @@ func newFixture(t *testing.T) *Server {
 			"owner":  {UserID: 1, Name: "Owner", Companies: map[int64]EmployerCompany{companyA: {ID: companyA, IsOwner: true, CanViewActivity: true}}},
 			"ownerB": {UserID: 2, Name: "OwnerB", Companies: map[int64]EmployerCompany{companyB: {ID: companyB, IsOwner: true, CanViewActivity: true}}},
 			"viewer": {UserID: 3, Name: "Viewer", Companies: map[int64]EmployerCompany{companyA: viewerCompany}},
+			// Same scope as viewer, plus add/edit/delete grants from Laravel.
+			"manager": {UserID: 5, Name: "Manager", Companies: map[int64]EmployerCompany{companyA: managerCompany}},
 			"nobody": {UserID: 4, Name: "Nobody", Companies: map[int64]EmployerCompany{companyA: {ID: companyA}}},
 		},
 	}
@@ -193,7 +197,8 @@ func TestOwnerOnlyRoutesRejectScopedViewer(t *testing.T) {
 	} {
 		r := call(t, s, c[0], "viewer", c[1], `{}`)
 		msg, _ := r.body["message"].(string)
-		if r.code != 403 || !strings.HasPrefix(msg, "only the company owner can") {
+		// No add/edit/delete grant for this viewer, so every write is refused.
+		if r.code != 403 || !strings.HasPrefix(msg, "you do not have permission to") {
 			t.Fatalf("%s %s gave %d %q", c[0], c[1], r.code, msg)
 		}
 	}
@@ -375,5 +380,26 @@ func TestMonthlyMembers(t *testing.T) {
 	top := monthly["metrics"].(map[string]any)["worked"].(map[string]any)["top"].([]any)
 	if len(top) != 2 {
 		t.Fatalf("monthly top includes out-of-scope members: %v", top)
+	}
+}
+
+// A non-owner holding the add/edit/delete permissions may change activity for
+// the people in their scope -- and only them -- but never company-wide settings.
+func TestGrantedManagerWritesWithinScopeOnly(t *testing.T) {
+	s := newFixture(t)
+	seedTeam(t, s)
+	if r := call(t, s, "POST", "manager", "/api/employer/1/members/101/manual", `{"date":"2026-01-05","minutes":10}`); r.code != 201 {
+		t.Fatalf("in-scope manual add gave %d %v", r.code, r.body["message"])
+	}
+	if r := call(t, s, "POST", "manager", "/api/employer/1/members/999/manual", `{"date":"2026-01-05","minutes":10}`); r.code != 403 {
+		t.Fatalf("out-of-scope manual add gave %d", r.code)
+	}
+	if r := call(t, s, "PUT", "manager", "/api/employer/1/settings", `{}`); r.code != 403 {
+		t.Fatalf("scoped company settings gave %d", r.code)
+	}
+	clock := call(t, s, "GET", "manager", "/api/employer/1/clock", "")
+	access, _ := clock.body["data"].(map[string]any)["access"].(map[string]any)
+	if access["can_add"] != true || access["can_edit"] != true || access["can_delete"] != true || access["can_manage"] != true {
+		t.Fatalf("manager clock access = %v", access)
 	}
 }
