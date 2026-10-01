@@ -31,7 +31,11 @@ hub:
 	go run . hub
 
 deps:
+ifeq ($(strip $(SKIP_TIDY)),)
 	go mod tidy
+else
+	@echo "deps: skipping 'go mod tidy' (SKIP_TIDY set -- e.g. the Go 1.20 legacy build, whose tidy rejects the go 1.22 directive; the build itself is unaffected)"
+endif
 
 # ── Native build (current machine) ────────────────────────────────
 build-local: deps

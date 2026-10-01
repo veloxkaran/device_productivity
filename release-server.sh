@@ -56,10 +56,16 @@ if [ "${BUILD_LEGACY:-0}" = "1" ]; then
   cd ..
   docker run --rm -v "$PWD":/src -w /src \
     -e HAJIR_API_URL="$API_URL" -e HUB_URL="$HUB_URL" -e GOFLAGS=-buildvcs=false \
+    -e GOTOOLCHAIN=local \
     golang:1.20-bullseye bash -c '
       set -e
       git config --global --add safe.directory /src 2>/dev/null || true
-      make GO_TAGS=legacyos \
+      # Go 1.20 rejects the committed "go 1.22" directive; pin it to 1.20 for this build
+      # only (the min/max shim covers the builtins), and always restore it afterward.
+      cp go.mod go.mod.legacybak
+      trap "mv -f go.mod.legacybak go.mod" EXIT
+      sed -i "s/^go 1\.22$/go 1.20/" go.mod
+      make SKIP_TIDY=1 GO_TAGS=legacyos \
            build-windows-amd64 build-windows-386 build-linux-amd64 build-linux-arm64 \
            package-windows-amd64 package-windows-386 package-linux-amd64 package-linux-arm64
     '

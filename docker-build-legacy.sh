@@ -32,12 +32,15 @@ docker run --rm \
   -v "$PWD":/src -w /src \
   -e HAJIR_API_URL="$HAJIR_API_URL" \
   -e HUB_URL="$HUB_URL" \
-  -e GOFLAGS=-buildvcs=false \
+  -e GOFLAGS=-buildvcs=false -e GOTOOLCHAIN=local \
   golang:1.20-bullseye \
   bash -c '
     set -e
     git config --global --add safe.directory /src 2>/dev/null || true
-    make GO_TAGS=legacyos \
+    cp go.mod go.mod.legacybak
+    trap "mv -f go.mod.legacybak go.mod" EXIT
+    sed -i "s/^go 1\.22$/go 1.20/" go.mod
+    make SKIP_TIDY=1 GO_TAGS=legacyos \
          package-windows-amd64 package-windows-386 \
          package-linux-amd64 package-linux-arm64
   '
