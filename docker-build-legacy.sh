@@ -8,7 +8,6 @@
 #
 # Produces, in ./dist:
 #   MyMonitor-Setup-windows-amd64.exe  (Windows 7+ 64-bit)
-#   MyMonitor-Setup-windows-386.exe    (Windows 7+ 32-bit)
 #   MyMonitor-Setup-linux-amd64 / -arm64  (static, runs on old glibc/musl)
 #
 # macOS is NOT built here (needs macOS tooling). For old Macs, on a Mac run:
@@ -41,16 +40,15 @@ docker run --rm \
     trap "mv -f go.mod.legacybak go.mod" EXIT
     sed -i "s/^go 1\.22$/go 1.20/" go.mod
     make SKIP_TIDY=1 GO_TAGS=legacyos \
-         package-windows-amd64 package-windows-386 \
+         package-windows-amd64 \
          package-linux-amd64 package-linux-arm64
   '
 
 echo ""
 echo "==> Done. Legacy installers in ./dist:"
 ls -lh dist/MyMonitor-Setup-windows-amd64.exe \
-       dist/MyMonitor-Setup-windows-386.exe \
        dist/MyMonitor-Setup-linux-amd64 \
        dist/MyMonitor-Setup-linux-arm64 2>/dev/null || true
 echo ""
-echo "    Give an old Windows 7/8 laptop the -386 (32-bit) or -amd64 (64-bit) installer."
+echo "    Give an old Windows 7/8 (64-bit) laptop the -amd64 installer."
 echo "    These sit alongside the normal installers; the modern ones stay the default."

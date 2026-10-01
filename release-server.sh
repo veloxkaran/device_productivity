@@ -66,18 +66,16 @@ if [ "${BUILD_LEGACY:-0}" = "1" ]; then
       trap "mv -f go.mod.legacybak go.mod" EXIT
       sed -i "s/^go 1\.22$/go 1.20/" go.mod
       make SKIP_TIDY=1 GO_TAGS=legacyos \
-           build-windows-amd64 build-windows-386 build-linux-amd64 build-linux-arm64 \
-           package-windows-amd64 package-windows-386 package-linux-amd64 package-linux-arm64
+           build-windows-amd64 build-linux-amd64 build-linux-arm64 \
+           package-windows-amd64 package-linux-amd64 package-linux-arm64
     '
   cd downloads
   # versioned legacy installers (shown in the Downloads tab, labelled "legacy OS")
   cp -f ../dist/MyMonitor-Setup-windows-amd64.exe "MyMonitor-Setup-windows-amd64-legacy-v${V}.exe"
-  cp -f ../dist/MyMonitor-Setup-windows-386.exe   "MyMonitor-Setup-windows-386-legacy-v${V}.exe"
   cp -f ../dist/MyMonitor-Setup-linux-amd64       "MyMonitor-Setup-linux-amd64-legacy-v${V}"
   cp -f ../dist/MyMonitor-Setup-linux-arm64       "MyMonitor-Setup-linux-arm64-legacy-v${V}"
   # versioned legacy raw auto-update binaries (hidden; referenced by latest.json)
   cp -f ../dist/my-monitor-windows-amd64.exe "my-monitor-windows-amd64-legacy-v${V}.exe"
-  cp -f ../dist/my-monitor-windows-386.exe   "my-monitor-windows-386-legacy-v${V}.exe"
   cp -f ../dist/my-monitor-linux-amd64       "my-monitor-linux-amd64-legacy-v${V}"
   cp -f ../dist/my-monitor-linux-arm64       "my-monitor-linux-arm64-legacy-v${V}"
   echo "   Legacy artifacts published (…-legacy-v${V}…)."
@@ -92,7 +90,7 @@ echo "==> 4/5 Write latest.json (points at versioned raw binaries)"
   for kv in "linux/amd64:my-monitor-linux-amd64-v${V}" "linux/arm64:my-monitor-linux-arm64-v${V}" \
             "windows/amd64:my-monitor-windows-amd64-v${V}.exe" "windows/arm64:my-monitor-windows-arm64-v${V}.exe" \
             "linux/amd64-legacy:my-monitor-linux-amd64-legacy-v${V}" "linux/arm64-legacy:my-monitor-linux-arm64-legacy-v${V}" \
-            "windows/amd64-legacy:my-monitor-windows-amd64-legacy-v${V}.exe" "windows/386-legacy:my-monitor-windows-386-legacy-v${V}.exe"; do
+            "windows/amd64-legacy:my-monitor-windows-amd64-legacy-v${V}.exe"; do
     key=${kv%%:*}; f=${kv#*:}; [ -f "$f" ] || continue
     sha=$(sha256sum "$f" | awk '{print $1}')
     [ $first -eq 1 ] || printf ',\n'; first=0
