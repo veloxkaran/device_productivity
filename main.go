@@ -6,7 +6,6 @@ import (
 	"my-monitor/auth"
 	"my-monitor/capture"
 	"my-monitor/cloud"
-	"my-monitor/hub"
 	"my-monitor/monitor"
 	"my-monitor/storage"
 	"my-monitor/web"
@@ -19,8 +18,10 @@ func main() {
 		openAppWindow("http://127.0.0.1:8090/app")
 		return
 	}
-	if len(os.Args) > 1 && os.Args[1] == "hub" {
-		hub.Run()
+	// Hub (server) mode lives in hubcmd*.go: included in the normal build, stubbed out of
+	// the Go 1.20 legacy build (the hub uses Go 1.22-only net/http features). A laptop never
+	// runs the hub, so the legacy desktop app simply omits it.
+	if maybeRunHub() {
 		return
 	}
 
