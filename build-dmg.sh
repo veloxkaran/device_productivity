@@ -23,6 +23,9 @@ fi
 PORT=8090
 HAJIR_API_URL="${HAJIR_API_URL:-http://localhost:8001/api/v2}"
 HUB_URL="${HUB_URL:-http://localhost:4010}"
+# Minimum macOS the built app will install on. 10.15 (Catalina) is the floor for a
+# Go 1.21+ toolchain. Build with Go 1.20 and MIN_MACOS=10.13 to reach High Sierra / Mojave.
+MIN_MACOS="${MIN_MACOS:-10.15}"
 LDFLAGS="-s -w -X my-monitor/web.DefaultHajirAPIURL=${HAJIR_API_URL} -X my-monitor/web.DefaultHubURL=${HUB_URL}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -63,9 +66,12 @@ if [[ "$BUILD_MODE" == "universal" ]]; then
     GOARCH=arm64 GOOS=darwin go build -ldflags="${LDFLAGS}" -o "${BUILD_DIR}/${BINARY_NAME}-arm64" .
 
     info "Building amd64 (CGo cross-compile via clang -arch x86_64)..."
+    # -mmacosx-version-min pins the Mach-O's minimum OS to match the plist, so the
+    # installed app runs on ${MIN_MACOS} and up rather than demanding the host's SDK.
     CGO_ENABLED=1 \
-    CGO_CFLAGS="-arch x86_64" \
-    CGO_LDFLAGS="-arch x86_64" \
+    MACOSX_DEPLOYMENT_TARGET="${MIN_MACOS}" \
+    CGO_CFLAGS="-arch x86_64 -mmacosx-version-min=${MIN_MACOS}" \
+    CGO_LDFLAGS="-arch x86_64 -mmacosx-version-min=${MIN_MACOS}" \
     CC="clang -arch x86_64" \
     GOARCH=amd64 GOOS=darwin \
     go build -ldflags="${LDFLAGS}" -o "${BUILD_DIR}/${BINARY_NAME}-amd64" .
@@ -113,7 +119,7 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" << PLIST
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleIconFile</key>        <string>AppIcon</string>
     <key>CFBundleSignature</key>       <string>????</string>
-    <key>LSMinimumSystemVersion</key>  <string>11.0</string>
+    <key>LSMinimumSystemVersion</key>  <string>${MIN_MACOS}</string>
     <key>LSUIElement</key>             <true/>
     <key>NSAppTransportSecurity</key>
     <dict><key>NSAllowsLocalNetworking</key><true/></dict>

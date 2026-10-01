@@ -58,7 +58,8 @@ func checkAndApply(cfg Config) error {
 	if !isNewer(man.Version, AppVersion) {
 		return nil // already up to date
 	}
-	asset, ok := man.Assets[runtime.GOOS+"/"+runtime.GOARCH]
+	// updateTrack is "" for normal builds and "-legacy" for the Go 1.20 legacy build.
+	asset, ok := man.Assets[runtime.GOOS+"/"+runtime.GOARCH+updateTrack]
 	if !ok || asset.URL == "" {
 		return nil // nothing published for this platform
 	}

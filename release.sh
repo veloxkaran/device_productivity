@@ -54,6 +54,40 @@ else
   echo "==> 1b/4  Skipping macOS .dmg (not on a Mac)"
 fi
 
+# Legacy-OS build (Windows 7/8, old Linux, old macOS). Opt-in: BUILD_LEGACY=1 ./release.sh
+# Built with Go 1.20 (the last release that targets those systems) on the "-legacy" update
+# lane, so old machines stay on legacy binaries instead of self-updating to a modern build
+# their OS cannot run.
+if [ "${BUILD_LEGACY:-0}" = "1" ]; then
+  echo "==> 1c/4  Building LEGACY installers + raw binaries (Go 1.20, Docker)"
+  docker run --rm -v "$PWD":/src -w /src \
+    -e HAJIR_API_URL="$HAJIR_API_URL" -e HUB_URL="$HUB_URL" -e GOFLAGS=-buildvcs=false \
+    golang:1.20-bullseye bash -c '
+      set -e
+      git config --global --add safe.directory /src 2>/dev/null || true
+      make GO_TAGS=legacyos \
+           build-mac-amd64 build-mac-arm64 \
+           build-linux-amd64 build-linux-arm64 \
+           build-windows-amd64 build-windows-386 \
+           package-windows-amd64 package-windows-386 \
+           package-linux-amd64 package-linux-arm64
+    '
+  # Rename legacy outputs so they sit alongside the modern ones without clobbering.
+  for f in windows-amd64.exe windows-386.exe linux-amd64 linux-arm64 darwin-amd64 darwin-arm64; do
+    base="my-monitor-$f"; ext=""; stem="$f"
+    case "$f" in *.exe) ext=".exe"; stem="${f%.exe}";; esac
+    [ -f "dist/$base" ] && cp -f "dist/$base" "$DEST/my-monitor-${stem}-legacy${ext}" || true
+  done
+  for f in windows-amd64 windows-386 linux-amd64 linux-arm64; do
+    ext=""; case "$f" in windows-*) ext=".exe";; esac
+    src="dist/MyMonitor-Setup-$f$ext"
+    [ -f "$src" ] && cp -f "$src" "$DEST/MyMonitor-Setup-$f-legacy$ext" || true
+  done
+  echo "    Legacy artifacts published to $DEST (…-legacy…)."
+else
+  echo "==> 1c/4  Skipping legacy build (set BUILD_LEGACY=1 to include Win7/8 + old-OS installers)"
+fi
+
 echo "==> 2/4  Publishing installers + raw binaries to $DEST"
 cp -f dist/MyMonitor-Setup-* "$DEST"/ 2>/dev/null || true
 cp -f dist/*.dmg "$DEST"/ 2>/dev/null || true
@@ -80,6 +114,12 @@ asset() { # key file
     asset "linux/arm64"   "my-monitor-linux-arm64"
     asset "windows/amd64" "my-monitor-windows-amd64.exe"
     asset "windows/arm64" "my-monitor-windows-arm64.exe"
+    asset "darwin/amd64-legacy"  "my-monitor-darwin-amd64-legacy"
+    asset "darwin/arm64-legacy"  "my-monitor-darwin-arm64-legacy"
+    asset "linux/amd64-legacy"   "my-monitor-linux-amd64-legacy"
+    asset "linux/arm64-legacy"   "my-monitor-linux-arm64-legacy"
+    asset "windows/amd64-legacy" "my-monitor-windows-amd64-legacy.exe"
+    asset "windows/386-legacy"   "my-monitor-windows-386-legacy.exe"
   } | sed '$ s/,$//'   # drop trailing comma on last asset
   echo '  }'
   echo '}'

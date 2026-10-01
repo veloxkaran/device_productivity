@@ -2,10 +2,10 @@
 .PHONY: run build build-local build-all \
         build-mac-amd64 build-mac-arm64 \
         build-linux-amd64 build-linux-arm64 \
-        build-windows-amd64 \
+        build-windows-amd64 build-windows-386 \
         package package-macos package-macos-universal \
         package-linux-amd64 package-linux-arm64 \
-        package-windows-amd64 \
+        package-windows-amd64 package-windows-386 \
         dist clean deps
 
 # ── Server URLs baked into the desktop app ─────────────────────────
@@ -17,6 +17,10 @@ HUB_URL       ?= http://localhost:4010
 #   make package-macos PROVISION_TOKEN=hdv_xxxxx
 PROVISION_TOKEN ?=
 LDFLAGS := -s -w -X my-monitor/web.DefaultHajirAPIURL=$(HAJIR_API_URL) -X my-monitor/web.DefaultHubURL=$(HUB_URL) -X my-monitor/web.DefaultProvisionToken=$(PROVISION_TOKEN)
+# GO_TAGS: build tags for the APP binary. The legacy build (docker-build-legacy.sh) sets
+# GO_TAGS=legacyos so the app updates on the "-legacy" lane; empty for normal builds.
+GO_TAGS ?=
+GO_TAGS_FLAG := $(if $(strip $(GO_TAGS)),-tags $(GO_TAGS),)
 export HAJIR_API_URL HUB_URL PROVISION_TOKEN
 
 # ── Development ────────────────────────────────────────────────────
@@ -31,30 +35,38 @@ deps:
 
 # ── Native build (current machine) ────────────────────────────────
 build-local: deps
-	go build -ldflags="$(LDFLAGS)" -o my-monitor .
+	go build $(GO_TAGS_FLAG) -ldflags="$(LDFLAGS)" -o my-monitor .
 	@echo "Binary: ./my-monitor"
 
 build: build-local
 
 # ── Cross-compile app binaries ─────────────────────────────────────
 build-mac-amd64: deps
-	GOOS=darwin  GOARCH=amd64  go build -ldflags="$(LDFLAGS)" -o dist/my-monitor-darwin-amd64 .
+	GOOS=darwin  GOARCH=amd64  go build $(GO_TAGS_FLAG) -ldflags="$(LDFLAGS)" -o dist/my-monitor-darwin-amd64 .
 
 build-mac-arm64: deps
-	GOOS=darwin  GOARCH=arm64  go build -ldflags="$(LDFLAGS)" -o dist/my-monitor-darwin-arm64 .
+	GOOS=darwin  GOARCH=arm64  go build $(GO_TAGS_FLAG) -ldflags="$(LDFLAGS)" -o dist/my-monitor-darwin-arm64 .
 
+# CGO_ENABLED=0: fully static binary (modernc.org/sqlite is pure Go, so no libc is
+# needed). Runs on very old glibc/musl distros as well as new ones -- no
+# "GLIBC_x.xx not found" when a laptop is on an older distro.
 build-linux-amd64: deps
-	GOOS=linux   GOARCH=amd64  go build -ldflags="$(LDFLAGS)" -o dist/my-monitor-linux-amd64 .
+	GOOS=linux   GOARCH=amd64  CGO_ENABLED=0 go build $(GO_TAGS_FLAG) -ldflags="$(LDFLAGS)" -o dist/my-monitor-linux-amd64 .
 
 build-linux-arm64: deps
-	GOOS=linux   GOARCH=arm64  go build -ldflags="$(LDFLAGS)" -o dist/my-monitor-linux-arm64 .
+	GOOS=linux   GOARCH=arm64  CGO_ENABLED=0 go build $(GO_TAGS_FLAG) -ldflags="$(LDFLAGS)" -o dist/my-monitor-linux-arm64 .
 
 build-windows-amd64: deps
 	# -H windowsgui: no console window (required for the hidden/covert app)
-	GOOS=windows GOARCH=amd64  go build -ldflags="$(LDFLAGS) -H windowsgui" -o dist/my-monitor-windows-amd64.exe .
+	GOOS=windows GOARCH=amd64  go build $(GO_TAGS_FLAG) -ldflags="$(LDFLAGS) -H windowsgui" -o dist/my-monitor-windows-amd64.exe .
 
 build-windows-arm64: deps
-	GOOS=windows GOARCH=arm64  go build -ldflags="$(LDFLAGS) -H windowsgui" -o dist/my-monitor-windows-arm64.exe .
+	GOOS=windows GOARCH=arm64  go build $(GO_TAGS_FLAG) -ldflags="$(LDFLAGS) -H windowsgui" -o dist/my-monitor-windows-arm64.exe .
+
+# 32-bit Windows, for old laptops (Windows 7/8 x86). Needs a Go 1.20 toolchain to RUN on
+# Windows 7/8 at all -- Go 1.21+ binaries require Windows 10. Build via docker-build-legacy.sh.
+build-windows-386: deps
+	GOOS=windows GOARCH=386    CGO_ENABLED=0 go build $(GO_TAGS_FLAG) -ldflags="$(LDFLAGS) -H windowsgui" -o dist/my-monitor-windows-386.exe .
 
 build-all: deps
 	@mkdir -p dist
@@ -125,6 +137,20 @@ package-windows-arm64: build-windows-arm64
 	    ./cmd/installer-windows/
 	rm -f cmd/installer-windows/asset.bin
 	@echo ""; echo "  Installer: dist/MyMonitor-Setup-windows-arm64.exe"
+
+# 32-bit Windows installer (Windows 7/8 x86). The installer stub is built for 386 too, so
+# it runs on the same old machines. Build the whole thing under Go 1.20 (docker-build-legacy.sh)
+# or neither the app nor the installer will launch on Windows 7/8.
+package-windows-386: build-windows-386
+	@echo "==> Packaging Windows 386 (32-bit) installer..."
+	cp dist/my-monitor-windows-386.exe cmd/installer-windows/asset.bin
+	GOOS=windows GOARCH=386 go build \
+	    -tags packaging \
+	    -ldflags="-s -w -H windowsgui" \
+	    -o dist/MyMonitor-Setup-windows-386.exe \
+	    ./cmd/installer-windows/
+	rm -f cmd/installer-windows/asset.bin
+	@echo ""; echo "  Installer: dist/MyMonitor-Setup-windows-386.exe"
 
 # ── Build all platform packages ────────────────────────────────────
 package: package-macos package-linux-amd64 package-linux-arm64 package-windows-amd64

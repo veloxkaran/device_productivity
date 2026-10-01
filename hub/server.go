@@ -321,6 +321,9 @@ func platformOf(name string) (platform, arch, version string) {
 
 	isARM := strings.Contains(n, "arm64") || strings.Contains(n, "aarch64")
 	isX64 := strings.Contains(n, "amd64") || strings.Contains(n, "x64") || strings.Contains(n, "x86_64") || strings.Contains(n, "intel")
+	// 32-bit x86: "386"/"i386"/"x86" but NOT "x86_64". Old Windows 7/8 laptops.
+	is386 := (strings.Contains(n, "386") || strings.Contains(n, "i386") ||
+		(strings.Contains(n, "x86") && !strings.Contains(n, "x86_64"))) && !isX64
 	isUniv := strings.Contains(n, "universal")
 	switch {
 	case isUniv:
@@ -331,8 +334,19 @@ func platformOf(name string) (platform, arch, version string) {
 		arch = "Intel"
 	case isARM:
 		arch = "ARM64"
+	case is386:
+		arch = "x86 (32-bit)"
 	case isX64:
 		arch = "x64 (Intel/AMD)"
+	}
+
+	// "-legacy" marks the Go 1.20 build for old systems (Windows 7/8, macOS 10.13/10.14).
+	if strings.Contains(n, "legacy") {
+		if arch != "" {
+			arch += " · legacy OS"
+		} else {
+			arch = "legacy OS"
+		}
 	}
 
 	// A macOS .dmg with no explicit arch is our universal build.
