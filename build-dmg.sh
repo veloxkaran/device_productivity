@@ -27,6 +27,13 @@ HUB_URL="${HUB_URL:-http://localhost:4010}"
 # Go 1.21+ toolchain. Build with Go 1.20 and MIN_MACOS=10.13 to reach High Sierra / Mojave.
 MIN_MACOS="${MIN_MACOS:-10.15}"
 LDFLAGS="-s -w -X my-monitor/web.DefaultHajirAPIURL=${HAJIR_API_URL} -X my-monitor/web.DefaultHubURL=${HUB_URL}"
+# Legacy macOS (10.13/10.14): run this with a Go 1.20 toolchain and GO_TAGS=legacyos
+# MIN_MACOS=10.13, e.g.:  GO_TAGS=legacyos MIN_MACOS=10.13 ARCH=universal bash build-dmg.sh
+# The legacyos tag drops the hub server (Go 1.22-only) from the app and puts it on the
+# "-legacy" auto-update lane; the min/max shim covers the builtins Go 1.20 lacks.
+GO_TAGS="${GO_TAGS:-}"
+GO_TAGS_FLAG=""
+[ -n "$GO_TAGS" ] && GO_TAGS_FLAG="-tags $GO_TAGS"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_DIR="${SCRIPT_DIR}/dist"
@@ -57,13 +64,20 @@ rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR"
 
 cd "$SCRIPT_DIR"
-go mod tidy
+if [[ "$GO_TAGS" == *legacyos* ]]; then
+    # Go 1.20 can't tidy or read a "go 1.22" directive; pin it for this build and restore.
+    cp go.mod go.mod.legacybak
+    trap 'mv -f go.mod.legacybak go.mod 2>/dev/null || true' EXIT
+    sed -i.sedbak 's/^go 1\.22$/go 1.20/' go.mod && rm -f go.mod.sedbak
+else
+    go mod tidy
+fi
 
 if [[ "$BUILD_MODE" == "universal" ]]; then
     # Universal binary requires CGo cross-compile for the non-native arch.
     # clang on Apple Silicon can target x86_64 with -arch flag.
     info "Building arm64..."
-    GOARCH=arm64 GOOS=darwin go build -ldflags="${LDFLAGS}" -o "${BUILD_DIR}/${BINARY_NAME}-arm64" .
+    GOARCH=arm64 GOOS=darwin go build ${GO_TAGS_FLAG} -ldflags="${LDFLAGS}" -o "${BUILD_DIR}/${BINARY_NAME}-arm64" .
 
     info "Building amd64 (CGo cross-compile via clang -arch x86_64)..."
     # -mmacosx-version-min pins the Mach-O's minimum OS to match the plist, so the
@@ -74,7 +88,7 @@ if [[ "$BUILD_MODE" == "universal" ]]; then
     CGO_LDFLAGS="-arch x86_64 -mmacosx-version-min=${MIN_MACOS}" \
     CC="clang -arch x86_64" \
     GOARCH=amd64 GOOS=darwin \
-    go build -ldflags="${LDFLAGS}" -o "${BUILD_DIR}/${BINARY_NAME}-amd64" .
+    go build ${GO_TAGS_FLAG} -ldflags="${LDFLAGS}" -o "${BUILD_DIR}/${BINARY_NAME}-amd64" .
 
     lipo -create -output "${BUILD_DIR}/${BINARY_NAME}" \
         "${BUILD_DIR}/${BINARY_NAME}-arm64" \
@@ -82,7 +96,7 @@ if [[ "$BUILD_MODE" == "universal" ]]; then
     rm "${BUILD_DIR}/${BINARY_NAME}-arm64" "${BUILD_DIR}/${BINARY_NAME}-amd64"
     ok "Universal binary: ${BUILD_DIR}/${BINARY_NAME}"
 else
-    GOARCH="$GOARCH" GOOS=darwin go build -ldflags="${LDFLAGS}" -o "${BUILD_DIR}/${BINARY_NAME}" .
+    GOARCH="$GOARCH" GOOS=darwin go build ${GO_TAGS_FLAG} -ldflags="${LDFLAGS}" -o "${BUILD_DIR}/${BINARY_NAME}" .
     ok "Binary (${GOARCH}): ${BUILD_DIR}/${BINARY_NAME}"
 fi
 
