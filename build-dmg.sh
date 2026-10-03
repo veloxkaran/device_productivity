@@ -57,6 +57,11 @@ ok()    { echo -e "   \033[0;32m✓\033[0m  $1"; }
 warn()  { echo -e "   \033[1;33m⚠\033[0m  $1"; }
 info()  { echo -e "   \033[2mℹ  $1\033[0m"; }
 
+# Pin the Mach-O minimum OS for EVERY slice. Without this, cgo inherits the host SDK
+# (e.g. macOS 26) and the app shows a "no entry" icon / "update macOS" on older Macs.
+export MACOSX_DEPLOYMENT_TARGET="${MIN_MACOS}"
+export CGO_ENABLED=1
+
 # ── Build binary ─────────────────────────────────────────────────
 step "Building Go binary — $BUILD_MODE"
 
@@ -77,6 +82,9 @@ if [[ "$BUILD_MODE" == "universal" ]]; then
     # Universal binary requires CGo cross-compile for the non-native arch.
     # clang on Apple Silicon can target x86_64 with -arch flag.
     info "Building arm64..."
+    CGO_CFLAGS="-arch arm64 -mmacosx-version-min=${MIN_MACOS}" \
+    CGO_LDFLAGS="-arch arm64 -mmacosx-version-min=${MIN_MACOS}" \
+    CC="clang -arch arm64" \
     GOARCH=arm64 GOOS=darwin go build ${GO_TAGS_FLAG} -ldflags="${LDFLAGS}" -o "${BUILD_DIR}/${BINARY_NAME}-arm64" .
 
     info "Building amd64 (CGo cross-compile via clang -arch x86_64)..."
@@ -96,8 +104,22 @@ if [[ "$BUILD_MODE" == "universal" ]]; then
     rm "${BUILD_DIR}/${BINARY_NAME}-arm64" "${BUILD_DIR}/${BINARY_NAME}-amd64"
     ok "Universal binary: ${BUILD_DIR}/${BINARY_NAME}"
 else
+    CGO_CFLAGS="-mmacosx-version-min=${MIN_MACOS}" \
+    CGO_LDFLAGS="-mmacosx-version-min=${MIN_MACOS}" \
     GOARCH="$GOARCH" GOOS=darwin go build ${GO_TAGS_FLAG} -ldflags="${LDFLAGS}" -o "${BUILD_DIR}/${BINARY_NAME}" .
     ok "Binary (${GOARCH}): ${BUILD_DIR}/${BINARY_NAME}"
+fi
+
+# Guard: fail the build if any slice still demands a newer macOS than MIN_MACOS.
+if command -v vtool >/dev/null 2>&1; then
+    for a in $(lipo -archs "${BUILD_DIR}/${BINARY_NAME}"); do
+        MINOS=$(vtool -arch "$a" -show-build "${BUILD_DIR}/${BINARY_NAME}" 2>/dev/null | awk '/minos/{print $2; exit}')
+        info "$a minos: ${MINOS:-unknown}"
+        if [[ -n "$MINOS" ]] && [[ "$(printf '%s\n%s\n' "$MINOS" "$MIN_MACOS" | sort -V | tail -1)" != "$MIN_MACOS" ]] \
+           && [[ "$a" != "arm64" || "${MINOS%%.*}" -gt 11 ]]; then
+            echo "✗ $a slice requires macOS $MINOS (> $MIN_MACOS). Aborting." >&2; exit 1
+        fi
+    done
 fi
 
 # ── Build .app bundle ─────────────────────────────────────────────

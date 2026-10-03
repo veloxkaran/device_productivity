@@ -1,4 +1,5 @@
 .PHONY: reset-permissions dev-cert
+MIN_MACOS ?= 10.15
 .PHONY: run build build-local build-all \
         build-mac-amd64 build-mac-arm64 \
         build-linux-amd64 build-linux-arm64 \
@@ -46,10 +47,10 @@ build: build-local
 
 # ── Cross-compile app binaries ─────────────────────────────────────
 build-mac-amd64: deps
-	GOOS=darwin  GOARCH=amd64  go build $(GO_TAGS_FLAG) -ldflags="$(LDFLAGS)" -o dist/my-monitor-darwin-amd64 .
+	MACOSX_DEPLOYMENT_TARGET=$(MIN_MACOS) CGO_ENABLED=1 CC="clang -arch x86_64" CGO_CFLAGS="-arch x86_64 -mmacosx-version-min=$(MIN_MACOS)" CGO_LDFLAGS="-arch x86_64 -mmacosx-version-min=$(MIN_MACOS)" GOOS=darwin  GOARCH=amd64  go build $(GO_TAGS_FLAG) -ldflags="$(LDFLAGS)" -o dist/my-monitor-darwin-amd64 .
 
 build-mac-arm64: deps
-	GOOS=darwin  GOARCH=arm64  go build $(GO_TAGS_FLAG) -ldflags="$(LDFLAGS)" -o dist/my-monitor-darwin-arm64 .
+	MACOSX_DEPLOYMENT_TARGET=$(MIN_MACOS) CGO_ENABLED=1 CC="clang -arch arm64" CGO_CFLAGS="-arch arm64 -mmacosx-version-min=$(MIN_MACOS)" CGO_LDFLAGS="-arch arm64 -mmacosx-version-min=$(MIN_MACOS)" GOOS=darwin  GOARCH=arm64  go build $(GO_TAGS_FLAG) -ldflags="$(LDFLAGS)" -o dist/my-monitor-darwin-arm64 .
 
 # CGO_ENABLED=0: fully static binary (modernc.org/sqlite is pure Go, so no libc is
 # needed). Runs on very old glibc/musl distros as well as new ones -- no
