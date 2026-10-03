@@ -7,8 +7,8 @@
     <key>CFBundleIdentifier</key>      <string>com.hajir.tracker</string>
     <key>CFBundleName</key>            <string>My Monitor</string>
     <key>CFBundleDisplayName</key>     <string>My Monitor</string>
-    <key>CFBundleVersion</key>         <string>2.1.0</string>
-    <key>CFBundleShortVersionString</key><string>2.1.0</string>
+    <key>CFBundleVersion</key>         <string>2.1.3</string>
+    <key>CFBundleShortVersionString</key><string>2.1.3</string>
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleIconFile</key>        <string>AppIcon</string>
     <key>CFBundleSignature</key>       <string>????</string>
