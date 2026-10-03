@@ -14,7 +14,9 @@ set -euo pipefail
 APP_NAME="MyMonitor"
 DISPLAY_NAME="My Monitor"
 BINARY_NAME="my-monitor"
-VERSION="2.1.0"
+# Single source of truth: the AppVersion the agent reports (cloud/heartbeat.go).
+VERSION="${VERSION:-$(sed -n 's/.*AppVersion = "\(.*\)".*/\1/p' "$(dirname "${BASH_SOURCE[0]}")/cloud/heartbeat.go")}"
+: "${VERSION:?could not read AppVersion from cloud/heartbeat.go}"
 BUNDLE_ID="com.hajir.tracker"
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
 if [[ -z "$SIGN_IDENTITY" ]] && security find-identity -v -p codesigning 2>/dev/null | grep -q "Hajir Local Signing"; then
