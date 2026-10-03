@@ -12,7 +12,7 @@
     <key>CFBundlePackageType</key>     <string>APPL</string>
     <key>CFBundleIconFile</key>        <string>AppIcon</string>
     <key>CFBundleSignature</key>       <string>????</string>
-    <key>LSMinimumSystemVersion</key>  <string>11.0</string>
+    <key>LSMinimumSystemVersion</key>  <string>10.15</string>
     <key>LSUIElement</key>             <true/>
     <key>NSAppTransportSecurity</key>
     <dict><key>NSAllowsLocalNetworking</key><true/></dict>
