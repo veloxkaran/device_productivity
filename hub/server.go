@@ -95,6 +95,9 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("PUT /api/employer/{company}/members/{user}/settings", s.can(actEdit, "change member settings", s.handleSaveMemberSettings))
 
 	mux.Handle("GET /api/employer/{company}/downloads", s.employer(s.handleDownloads))
+	// Public installer list for the employee dashboard. Installers are already public
+	// via /downloads/{name}; this only lists them (no company data).
+	mux.HandleFunc("GET /api/downloads", func(w http.ResponseWriter, r *http.Request) { s.handleDownloads(w, r, nil, 0) })
 	mux.HandleFunc("GET /downloads/{name}", s.handleDownloadFile)
 	mux.HandleFunc("PUT /api/internal/companies/{company}/modules", s.handleInternalModules)
 
