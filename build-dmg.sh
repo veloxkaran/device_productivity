@@ -19,8 +19,10 @@ VERSION="${VERSION:-$(sed -n 's/.*AppVersion = "\(.*\)".*/\1/p' "$(dirname "${BA
 : "${VERSION:?could not read AppVersion from cloud/heartbeat.go}"
 BUNDLE_ID="com.hajir.tracker"
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
-if [[ -z "$SIGN_IDENTITY" ]] && security find-identity -v -p codesigning 2>/dev/null | grep -q "Hajir Local Signing"; then
-    SIGN_IDENTITY="Hajir Local Signing"
+# Resolve the local signing cert to its SHA-1 hash (not its name) so duplicate
+# certs with the same name never cause a codesign "ambiguous" error.
+if [[ -z "$SIGN_IDENTITY" ]]; then
+    SIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | awk '/Hajir Local Signing/{print $2; exit}')"
 fi
 PORT=8090
 HAJIR_API_URL="${HAJIR_API_URL:-http://localhost:8001/api/v2}"
