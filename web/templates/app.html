@@ -263,7 +263,7 @@ main{padding:18px 16px 14px}
   const $ = (id) => document.getElementById(id);
   const PLAY = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15a1 1 0 0 0 1.5.86l12.5-7.5a1 1 0 0 0 0-1.72L8.5 3.64A1 1 0 0 0 7 4.5z"/></svg>';
   const PAUSE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>';
-  let S = null, fetchedAt = 0, view = null, busy = false, pendingLogin = null;
+  let S = null, fetchedAt = 0, view = null, busy = false, pendingLogin = null, setupManual = false;
 
   const api = async (path, body) => {
     const r = await fetch('/app/api/' + path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Hajir-Client': '1' }, body: JSON.stringify(body) });
@@ -381,6 +381,8 @@ main{padding:18px 16px 14px}
     try {
       await api('login', { login: $('login').value.trim(), password: $('pw').value, remember: $('remember').checked, company_id: companyId || 0 });
       $('pw').value = ''; pendingLogin = null; view = null;
+      // Set up as Manual => no automatic tracking; the person uses Start / End.
+      if (setupManual) { setupManual = false; await api('mode', { mode: 'manual' }).catch(() => {}); }
       await refresh();
     } catch (e) {
       if (e.status === 409 && e.data.companies) {
@@ -418,8 +420,8 @@ main{padding:18px 16px 14px}
   $('btnDash').onclick = () => window.open('/time', '_blank');
   $('lnkBack').onclick = (e) => { e.preventDefault(); show('vLogin'); };
   $('btnCompany').onclick = () => { const id = Number($('companySel').value); if (id) { show('vLogin'); doLogin(id); } };
-  $('chManual').onclick = () => { $('login').value = (S && S.login) || ''; show('vLogin'); };
-  $('chAuto').onclick = () => { show('vToken'); };
+  $('chManual').onclick = () => { setupManual = true; $('login').value = (S && S.login) || ''; show('vLogin'); };
+  $('chAuto').onclick = () => { setupManual = false; show('vToken'); };
   $('lnkBackSetup').onclick = (e) => { e.preventDefault(); show('vSetup'); };
   $('fToken').onsubmit = async (e) => {
     e.preventDefault();
