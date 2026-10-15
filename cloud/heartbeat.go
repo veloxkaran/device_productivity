@@ -116,17 +116,22 @@ func (s *Syncer) sendHeartbeat() {
 // on rather than a Clock In press. Switching back to "manual" hands control to
 // the user again (a session already open is left running until stopped).
 func (s *Syncer) applyTrackingMode(mode string) {
-	auto := mode == "auto"
-	was := monitor.AutoMode()
-	if auto != was {
-		monitor.SetAutoMode(auto)
-		if auto {
-			log.Printf("cloud: tracking mode set to AUTO by employer — tracking follows device power")
-		} else {
-			log.Printf("cloud: tracking mode set to MANUAL by employer — Clock In required")
+	// The person's own choice in the app wins; only let the hub set the mode
+	// when the user hasn't locked it locally.
+	if !monitor.UserModeLocked() {
+		auto := mode == "auto"
+		was := monitor.AutoMode()
+		if auto != was {
+			monitor.SetAutoMode(auto)
+			if auto {
+				log.Printf("cloud: tracking mode set to AUTO by employer — tracking follows device power")
+			} else {
+				log.Printf("cloud: tracking mode set to MANUAL by employer — Clock In required")
+			}
 		}
 	}
-	if auto && monitor.TrackingEnabled() && !monitor.IsClockedIn() && !monitor.IsOnBreak() {
+	// Auto-clock-in follows the effective mode regardless of who set it.
+	if monitor.AutoMode() && monitor.TrackingEnabled() && !monitor.IsClockedIn() && !monitor.IsOnBreak() {
 		uid := s.db.FirstUserID()
 		if uid <= 0 {
 			return

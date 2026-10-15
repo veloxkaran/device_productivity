@@ -29,3 +29,11 @@ var autoMode atomic.Bool
 
 func AutoMode() bool     { return autoMode.Load() }
 func SetAutoMode(v bool) { autoMode.Store(v) }
+
+// userModeLock is set once the person chooses the tracking mode in the app.
+// While set, the hub's per-member mode no longer flips it — the client choice
+// wins. (The employer can still pause tracking entirely via TrackingEnabled.)
+var userModeLock atomic.Bool
+
+func UserModeLocked() bool { return userModeLock.Load() }
+func LockUserMode(v bool)  { userModeLock.Store(v) }

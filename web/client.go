@@ -46,6 +46,9 @@ type clientConfig struct {
 	CompanyName string `json:"company_name"`
 	IdleMinutes int    `json:"idle_minutes"`
 	DeviceToken string `json:"device_token"`
+	// TrackingMode is the person's own choice in the app: "manual", "auto", or
+	// "" (follow the hub). Once set, it overrides the hub's per-member mode.
+	TrackingMode string `json:"tracking_mode"`
 }
 
 type idleState struct {
@@ -166,6 +169,14 @@ func NewClient(db *storage.DB, mgr *cloud.Manager) *Client {
 		c.cfg.DeviceToken = "hajir-desktop-" + hex.EncodeToString(b)
 		c.save()
 	}
+	// Apply the person's saved tracking choice; it wins over the hub from now on.
+	if c.cfg.TrackingMode == "auto" {
+		monitor.LockUserMode(true)
+		monitor.SetAutoMode(true)
+	} else if c.cfg.TrackingMode == "manual" {
+		monitor.LockUserMode(true)
+		monitor.SetAutoMode(false)
+	}
 	go c.watchIdle()
 	return c
 }
@@ -235,6 +246,7 @@ func (c *Client) Register(mux *http.ServeMux) {
 	mux.HandleFunc("/app/api/logout", localOnly(c.handleLogout))
 	mux.HandleFunc("/app/api/start", localOnly(c.handleStart))
 	mux.HandleFunc("/app/api/stop", localOnly(c.handleStop))
+	mux.HandleFunc("/app/api/mode", localOnly(c.handleMode))
 	mux.HandleFunc("/app/api/break", localOnly(c.handleBreak))
 	mux.HandleFunc("/app/api/idle", localOnly(c.handleIdle))
 	mux.HandleFunc("/app/api/quit", localOnly(c.handleQuit))
@@ -562,6 +574,34 @@ func (c *Client) handleStop(w http.ResponseWriter, r *http.Request) {
 	c.mu.Unlock()
 	c.mgr.SyncNow()
 	jsonOut(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (c *Client) handleMode(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Mode string `json:"mode"`
+	}
+	json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&in)
+	if in.Mode != "auto" && in.Mode != "manual" {
+		jsonErr(w, http.StatusUnprocessableEntity, "mode must be manual or auto")
+		return
+	}
+	auto := in.Mode == "auto"
+	c.mu.Lock()
+	c.cfg.TrackingMode = in.Mode
+	c.save()
+	c.mu.Unlock()
+	monitor.LockUserMode(true)
+	monitor.SetAutoMode(auto)
+	// Switching to automatic starts a session right away; switching to manual
+	// leaves any open session running until the person presses End.
+	if auto && monitor.TrackingEnabled() && !monitor.IsClockedIn() && !monitor.IsOnBreak() {
+		if _, err := c.db.ClockIn(c.uid()); err == nil {
+			monitor.SetClockedIn(true)
+			capture.TakeNow()
+		}
+	}
+	c.mgr.SyncNow()
+	jsonOut(w, http.StatusOK, map[string]any{"ok": true, "auto_mode": auto})
 }
 
 func (c *Client) handleBreak(w http.ResponseWriter, r *http.Request) {
