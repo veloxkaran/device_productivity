@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-const AppVersion = "2.1.5"
+const AppVersion = "2.1.6"
 
 func (s *Syncer) heartbeatLoop(interval time.Duration, stop <-chan struct{}) {
 	t := time.NewTicker(interval)
@@ -116,22 +116,25 @@ func (s *Syncer) sendHeartbeat() {
 	s.applyTrackingMode(mode)
 }
 
-// applyTrackingMode reacts to the per-member mode reported by the hub. In "auto"
-// mode the agent clocks in on its own whenever it is running, signed in and the
-// employer's Activity module is enabled, so tracking follows the computer being
-// on rather than a Clock In press. Switching back to "manual" hands control to
-// the user again (a session already open is left running until stopped).
+// applyTrackingMode sets the effective tracking mode. Precedence:
+//  1. Employer policy lock (lock_auto / lock_manual) wins over everything.
+//  2. Otherwise (flexible): a MANAGED (token-provisioned) device always tracks
+//     automatically; an INTERACTIVE sign-in defaults to MANUAL — the person must
+//     press Start — unless they have chosen Automatic themselves in the app.
+// The hub's per-member tracking_mode is no longer used to force auto on an
+// interactive device; that is what the employer policy is for.
 func (s *Syncer) applyTrackingMode(mode string) {
-	// Precedence: an employer lock wins over everything; otherwise (flexible) the
-	// person's own app choice wins; otherwise fall back to the member's mode.
+	_ = mode // retained for API compatibility; policy + device type now decide
 	switch monitor.ModePolicy() {
 	case "lock_auto":
 		monitor.SetAutoMode(true)
 	case "lock_manual":
 		monitor.SetAutoMode(false)
 	default: // flexible
-		if !monitor.UserModeLocked() && mode != "" {
-			monitor.SetAutoMode(mode == "auto")
+		if s.cfg.Managed {
+			monitor.SetAutoMode(true)
+		} else if !monitor.UserModeLocked() {
+			monitor.SetAutoMode(false)
 		}
 	}
 	// Auto-clock-in follows the effective mode regardless of who set it.
