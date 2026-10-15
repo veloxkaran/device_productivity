@@ -16,6 +16,11 @@ if [ "$(uname -s)" = "Darwin" ]; then
   exit 1
 fi
 
+# Container engine: podman if present, else docker (override with CONTAINER_ENGINE).
+CTR="${CONTAINER_ENGINE:-}"
+if [ -z "$CTR" ]; then command -v podman >/dev/null 2>&1 && CTR=podman || CTR=docker; fi
+echo "==> Using container engine: $CTR"
+
 HUB_URL="https://monitor.veloxlabs.net"
 API_URL="https://dev.veloxlabs.net/api/v2"
 V="$(sed -n 's/.*AppVersion = "\(.*\)".*/\1/p' cloud/heartbeat.go)"
@@ -26,32 +31,35 @@ echo "==> 1/5 Ensure hub uses the real backend API (avoids self-call 404)"
 sed -i "s#^HAJIR_API_URL=.*#HAJIR_API_URL=${API_URL}#" .env.production
 grep HAJIR_API_URL .env.production
 
-echo "==> 2/5 Build Windows + Linux in Docker (macOS must be built on a Mac)"
-docker run --rm -v "$PWD":/src -w /src \
+echo "==> 2/5 Build Windows + Linux GUI wizard installers (macOS must be built on a Mac)"
+$CTR run --rm -v "$PWD":/src -w /src \
   -e HAJIR_API_URL="$API_URL" -e HUB_URL="$HUB_URL" -e GOFLAGS=-buildvcs=false \
   golang:1.22-bookworm bash -c '
     set -e
+    apt-get update -qq && apt-get install -y -qq zip >/dev/null
     git config --global --add safe.directory /src 2>/dev/null || true
     make build-windows-amd64 build-windows-arm64 build-linux-amd64 build-linux-arm64
-    make package-windows-amd64 package-windows-arm64 package-linux-amd64 package-linux-arm64
+    make installer-gui-windows-amd64 installer-gui-windows-arm64 installer-gui-linux-amd64 installer-gui-linux-arm64
   '
 
 echo "==> 3/5 Publish versioned filenames into ./downloads"
 cd downloads
-# people-facing installers (shown in the Downloads tab)
-cp -f ../dist/MyMonitor-Setup-windows-amd64.exe "MyMonitor-Setup-windows-amd64-v${V}.exe"
-cp -f ../dist/MyMonitor-Setup-windows-arm64.exe "MyMonitor-Setup-windows-arm64-v${V}.exe"
-cp -f ../dist/MyMonitor-Setup-linux-amd64       "MyMonitor-Setup-linux-amd64-v${V}"
-cp -f ../dist/MyMonitor-Setup-linux-arm64       "MyMonitor-Setup-linux-arm64-v${V}"
+# people-facing GUI wizard installers (shown in the Downloads tab)
+cp -f ../dist/MyMonitor-GUI-Setup-windows-amd64.zip "MyMonitor-GUI-Setup-windows-amd64-v${V}.zip"
+cp -f ../dist/MyMonitor-GUI-Setup-windows-arm64.zip "MyMonitor-GUI-Setup-windows-arm64-v${V}.zip"
+cp -f ../dist/MyMonitor-GUI-Setup-linux-amd64.zip   "MyMonitor-GUI-Setup-linux-amd64-v${V}.zip"
+cp -f ../dist/MyMonitor-GUI-Setup-linux-arm64.zip   "MyMonitor-GUI-Setup-linux-arm64-v${V}.zip"
 # raw auto-update binaries (hidden from the tab; referenced by latest.json)
 cp -f ../dist/my-monitor-windows-amd64.exe "my-monitor-windows-amd64-v${V}.exe"
 cp -f ../dist/my-monitor-windows-arm64.exe "my-monitor-windows-arm64-v${V}.exe"
 cp -f ../dist/my-monitor-linux-amd64       "my-monitor-linux-amd64-v${V}"
 cp -f ../dist/my-monitor-linux-arm64       "my-monitor-linux-arm64-v${V}"
 
-# remove stale UNVERSIONED installers so the tab shows only fresh versioned ones
-rm -f MyMonitor-Setup-windows-amd64.exe MyMonitor-Setup-windows-arm64.exe \
-      MyMonitor-Setup-linux-amd64 MyMonitor-Setup-linux-arm64 \
+# retire the old console installers (every version) so the tab shows only the GUI wizard,
+# plus any stale unversioned raw binaries.
+rm -f MyMonitor-Setup-* 2>/dev/null || true
+rm -f MyMonitor-GUI-Setup-windows-amd64.zip MyMonitor-GUI-Setup-windows-arm64.zip \
+      MyMonitor-GUI-Setup-linux-amd64.zip MyMonitor-GUI-Setup-linux-arm64.zip \
       my-monitor-windows-amd64.exe my-monitor-windows-arm64.exe \
       my-monitor-linux-amd64 my-monitor-linux-arm64 2>/dev/null || true
 rm -rf ./[0-9]*.[0-9]* 2>/dev/null || true   # drop any old versioned SUBfolders
@@ -63,7 +71,7 @@ rm -rf ./[0-9]*.[0-9]* 2>/dev/null || true   # drop any old versioned SUBfolders
 if [ "${BUILD_LEGACY:-0}" = "1" ]; then
   echo "==> 3b/5 Build LEGACY (Go 1.20): Win7/8 64&32-bit + old Linux"
   cd ..
-  docker run --rm -v "$PWD":/src -w /src \
+  $CTR run --rm -v "$PWD":/src -w /src \
     -e HAJIR_API_URL="$API_URL" -e HUB_URL="$HUB_URL" -e GOFLAGS=-buildvcs=false \
     -e GOTOOLCHAIN=local \
     golang:1.20-bullseye bash -c '
@@ -111,11 +119,11 @@ cat latest.json
 cd ..
 
 echo "==> 5/5 Restart hub"
-docker compose --env-file .env.production up -d
+$CTR compose --env-file .env.production up -d --build
 sleep 3
-docker compose logs --since=20s hub | grep -i verify || echo "(no verify errors)"
+$CTR compose logs --since=20s hub | grep -i verify || echo "(no verify errors)"
 
 echo; echo "== verify fresh through Cloudflare =="
-curl -sI "$HUB_URL/downloads/MyMonitor-Setup-windows-amd64-v${V}.exe" | grep -iE "content-length|cf-cache-status" || true
+curl -sI "$HUB_URL/downloads/MyMonitor-GUI-Setup-windows-amd64-v${V}.zip" | grep -iE "content-length|cf-cache-status" || true
 echo; echo "DONE. Version $V"
-echo "Windows x64 install URL: $HUB_URL/downloads/MyMonitor-Setup-windows-amd64-v${V}.exe"
+echo "Windows x64 install URL: $HUB_URL/downloads/MyMonitor-GUI-Setup-windows-amd64-v${V}.zip"

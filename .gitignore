@@ -34,3 +34,5 @@ sed??????
 sedMSpOWs
 *.sedbak
 go.mod.legacybak
+
+dist/
