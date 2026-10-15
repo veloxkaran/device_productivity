@@ -23,29 +23,59 @@ static void requestScreenAccess(void) {
     dispatch_async(dispatch_get_main_queue(), ^{ CGRequestScreenCaptureAccess(); });
 }
 
-// Capture the main display IN-PROCESS. Because the TCC Screen Recording check is
-// then attributed to this app (which already holds the grant) instead of a
-// spawned /usr/sbin/screencapture child, the permission sticks and macOS stops
-// re-prompting on every launch/update.
-// Returns a malloc'd RGBA buffer (caller frees) and sets w/h/stride; NULL on failure.
-static unsigned char* captureMainDisplay(int* w, int* h, int* stride) {
-    CGDirectDisplayID disp = CGMainDisplayID();
-    CGImageRef img = CGDisplayCreateImage(disp);
-    if (!img) return NULL;
-    size_t width  = CGImageGetWidth(img);
-    size_t height = CGImageGetHeight(img);
-    size_t bpr    = width * 4;
-    unsigned char* buf = (unsigned char*)malloc(bpr * height);
-    if (!buf) { CGImageRelease(img); return NULL; }
+// Capture ALL active displays IN-PROCESS and compose them into one image laid
+// out by their real arrangement (fixes dual-monitor capture). In-process means
+// the TCC Screen Recording check is attributed to this app (which already holds
+// the grant), so the permission sticks instead of re-prompting.
+// Returns a malloc'd RGBA buffer (caller frees); sets w/h/stride; NULL on failure.
+static unsigned char* captureAllDisplays(int* w, int* h, int* stride) {
+    CGDirectDisplayID ids[16];
+    uint32_t n = 0;
+    if (CGGetActiveDisplayList(16, ids, &n) != kCGErrorSuccess || n == 0) return NULL;
+
+    // Backing scale from the main display, so Retina detail is preserved.
+    double scale = 1.0;
+    {
+        CGDirectDisplayID m = CGMainDisplayID();
+        CGRect mb = CGDisplayBounds(m);
+        size_t pw = CGDisplayPixelsWide(m);
+        if (mb.size.width > 0 && pw > 0) scale = (double)pw / mb.size.width;
+        if (scale < 1.0) scale = 1.0;
+    }
+
+    // Union of all display bounds (global, top-left origin, in points).
+    CGRect uni = CGDisplayBounds(ids[0]);
+    for (uint32_t i = 1; i < n; i++) uni = CGRectUnion(uni, CGDisplayBounds(ids[i]));
+    int W = (int)(uni.size.width  * scale + 0.5);
+    int H = (int)(uni.size.height * scale + 0.5);
+    if (W <= 0 || H <= 0) return NULL;
+
+    size_t bpr = (size_t)W * 4;
+    unsigned char* buf = (unsigned char*)calloc(bpr, (size_t)H);
+    if (!buf) return NULL;
     CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-    CGContextRef ctx = CGBitmapContextCreate(buf, width, height, 8, bpr, cs,
+    CGContextRef ctx = CGBitmapContextCreate(buf, W, H, 8, bpr, cs,
         kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
-    if (!ctx) { free(buf); CGColorSpaceRelease(cs); CGImageRelease(img); return NULL; }
-    CGContextDrawImage(ctx, CGRectMake(0, 0, (CGFloat)width, (CGFloat)height), img);
+    if (!ctx) { free(buf); CGColorSpaceRelease(cs); return NULL; }
+
+    int drew = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        CGImageRef im = CGDisplayCreateImage(ids[i]);
+        if (!im) continue;
+        CGRect b = CGDisplayBounds(ids[i]);
+        double x    = (b.origin.x - uni.origin.x) * scale;
+        double ytop = (b.origin.y - uni.origin.y) * scale;
+        double dw   = b.size.width  * scale;
+        double dh   = b.size.height * scale;
+        double y    = (double)H - ytop - dh; // CGBitmapContext is bottom-left origin
+        CGContextDrawImage(ctx, CGRectMake(x, y, dw, dh), im);
+        CGImageRelease(im);
+        drew++;
+    }
     CGContextRelease(ctx);
     CGColorSpaceRelease(cs);
-    CGImageRelease(img);
-    *w = (int)width; *h = (int)height; *stride = (int)bpr;
+    if (!drew) { free(buf); return NULL; }
+    *w = W; *h = H; *stride = (int)bpr;
     return buf;
 }
 */
@@ -90,7 +120,7 @@ func grab() (image.Image, error) {
 		return nil, ErrScreenUnavailable
 	}
 	var w, h, stride C.int
-	buf := C.captureMainDisplay(&w, &h, &stride)
+	buf := C.captureAllDisplays(&w, &h, &stride)
 	if buf == nil {
 		return nil, fmt.Errorf("screen capture failed (check Screen Recording permission)")
 	}
