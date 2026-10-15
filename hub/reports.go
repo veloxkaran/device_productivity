@@ -317,6 +317,46 @@ func sortOverview(rows []overviewRow, key string, desc bool) {
 	})
 }
 
+// deviceDayQuick computes one device's worked/active/idle totals for a day
+// window — used to give standalone (user_id 0) devices their own overview row.
+func (s *Server) deviceDayQuick(companyID, deviceID int64, start, end time.Time) (worked, active, idle time.Duration, firstIn, lastOut *time.Time, open bool) {
+	now := time.Now()
+	entries, _ := s.store.TimeEntries(companyID, 0, []int64{deviceID}, start, end)
+	for _, te := range entries {
+		if firstIn == nil || te.ClockIn.Before(*firstIn) {
+			t := te.ClockIn
+			firstIn = &t
+		}
+		from := maxTime(te.ClockIn, start)
+		to := now
+		if te.ClockOut != nil {
+			to = *te.ClockOut
+			if lastOut == nil || te.ClockOut.After(*lastOut) {
+				lastOut = te.ClockOut
+			}
+		} else {
+			open = true
+		}
+		to = minTime(to, end)
+		if to.After(from) {
+			worked += to.Sub(from)
+		}
+	}
+	samples, _ := s.store.Samples(companyID, 0, deviceID, start, end)
+	for i := 0; i+1 < len(samples); i++ {
+		gap := samples[i+1].CapturedAt.Sub(samples[i].CapturedAt)
+		if gap > maxSampleGap {
+			gap = maxSampleGap
+		}
+		if samples[i].IsActive {
+			active += gap
+		} else {
+			idle += gap
+		}
+	}
+	return
+}
+
 func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, e *Employer, companyID int64) {
 	q := r.URL.Query()
 	paged := pagingRequested(q)
@@ -349,18 +389,24 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, e *Emplo
 	}
 	shots, _ := s.store.CompanyScreenshots(companyID, 0, start, end)
 	lastShot := map[int64]Screenshot{}
+	lastShotByDevice := map[int64]Screenshot{}
 	for _, sh := range shots {
 		lastShot[sh.UserID] = sh
+		lastShotByDevice[sh.DeviceID] = sh
 	}
 
 	workday := s.isWorkday(cfg, start)
 	day := s.dayKey(start)
 	var rows []overviewRow
 	totals := map[string]any{}
-	var active, idle, onBreak, offline, late, absent, workedCount int
+	var active, idle, onBreak, offline, late, absent, workedCount, memberCount int
 	var workedSum float64
 
 	for _, m := range members {
+		if m.UserID == 0 {
+			continue // standalone/custom devices are emitted per-device below
+		}
+		memberCount++
 		st := ix[m.UserID][day]
 		if st == nil {
 			st = &dayStat{}
@@ -419,7 +465,65 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, e *Emplo
 			},
 		})
 	}
-	totals["total_members"] = len(members)
+	// Custom / standalone devices (no linked employee) each get their own row,
+	// keyed by device and linked to the device view instead of a member page.
+	if devs, derr := s.store.Devices(companyID, 0, false); derr == nil {
+		for _, d := range devs {
+			if d.UserID != 0 {
+				continue
+			}
+			worked, act, idl, firstIn, lastOut, open := s.deviceDayQuick(companyID, d.ID, start, end)
+			online := isToday && s.isOnline(d)
+			status := "offline"
+			if online {
+				status = d.LastStatus
+			}
+			switch status {
+			case "active":
+				active++
+			case "idle":
+				idle++
+			case "break":
+				onBreak++
+			default:
+				offline++
+			}
+			if worked > 0 {
+				workedCount++
+				workedSum += worked.Seconds()
+			}
+			name := d.EmployeeName
+			if name == "" {
+				name = d.Name
+			}
+			var shot any
+			var shotAt *time.Time
+			if sh, ok := lastShotByDevice[d.ID]; ok {
+				sc := sh.CapturedAt
+				shot = map[string]any{"id": sh.ID, "captured_at": isoPtr(&sc), "url": s.screenshotURL(sh.ID)}
+				shotAt = &sc
+			}
+			var out any
+			if !open {
+				out = isoPtr(lastOut)
+			}
+			rows = append(rows, overviewRow{
+				userID: 0, name: name, status: status, shift: shiftLabel(cfg), clockIn: firstIn, clockOut: lastOut,
+				worked: worked.Seconds(), lastShot: shotAt,
+				data: map[string]any{
+					"user_id": 0, "device_id": d.ID, "employee_name": name, "device_name": d.Name,
+					"platform": d.Platform, "online": online, "status": status, "is_clocked_in": open,
+					"current_app": d.LastApp, "last_seen_at": isoPtr(d.LastSeenAt),
+					"clock_in": isoPtr(firstIn), "clock_out": out,
+					"tracked_seconds": int64(worked.Seconds()), "worked_seconds": int64(worked.Seconds()),
+					"active_seconds": int64(act.Seconds()), "idle_seconds": int64(idl.Seconds()),
+					"break_seconds": 0, "manual_seconds": 0, "shift": shiftLabel(cfg),
+					"late": false, "absent": false, "last_screenshot": shot, "external": true,
+				},
+			})
+		}
+	}
+	totals["total_members"] = memberCount
 	totals["active_members"] = active
 	totals["idle_members"] = idle
 	totals["break_members"] = onBreak
