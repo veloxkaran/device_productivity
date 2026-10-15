@@ -37,3 +37,19 @@ var userModeLock atomic.Bool
 
 func UserModeLocked() bool { return userModeLock.Load() }
 func LockUserMode(v bool)  { userModeLock.Store(v) }
+
+// modePolicy is the employer's rule for who controls the tracking mode:
+//   "flexible"   (default) — the person chooses in the app
+//   "lock_auto"  — forced Automatic; the app toggle is hidden
+//   "lock_manual"— forced Manual; the app toggle is hidden
+// Reported by the hub each heartbeat.
+var modePolicy atomic.Value
+
+func ModePolicy() string {
+	if v, ok := modePolicy.Load().(string); ok && v != "" {
+		return v
+	}
+	return "flexible"
+}
+func SetModePolicy(v string) { modePolicy.Store(v) }
+func ModeLocked() bool       { p := ModePolicy(); return p == "lock_auto" || p == "lock_manual" }

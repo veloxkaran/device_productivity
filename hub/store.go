@@ -607,6 +607,13 @@ CREATE INDEX IF NOT EXISTS idx_msaudit ON member_setting_audit(company_id, user_
 			return err
 		}
 	}
+	// mode_policy column: who controls the mode — 'flexible' (default; the person
+	// chooses in the app), 'lock_auto', or 'lock_manual' (employer-forced).
+	if !s.hasColumn("member_settings", "mode_policy") {
+		if _, err := s.db.Exec(`ALTER TABLE member_settings ADD COLUMN mode_policy TEXT NOT NULL DEFAULT 'flexible'`); err != nil {
+			return err
+		}
+	}
 	// tracking_enabled column: per-member on/off. DEFAULT 1 (on) so adding it
 	// never pauses anyone. A super admin / employer pauses one member here.
 	if !s.hasColumn("member_settings", "tracking_enabled") {
@@ -861,6 +868,40 @@ func (s *Store) SetMemberTrackingMode(companyID, userID int64, mode string, acto
 	if old != mode {
 		s.db.Exec(`INSERT INTO member_setting_audit (company_id, user_id, field, old_value, new_value, actor_id, actor_name, at) VALUES (?,?,?,?,?,?,?,?)`,
 			companyID, userID, "tracking_mode", old, mode, actorID, actorName, ts(time.Now()))
+	}
+	return nil
+}
+
+// MemberModePolicy returns "flexible" (default), "lock_auto", or "lock_manual".
+func (s *Store) MemberModePolicy(companyID, userID int64) string {
+	var m sql.NullString
+	if err := s.db.QueryRow(`SELECT mode_policy FROM member_settings WHERE company_id = ? AND user_id = ?`, companyID, userID).Scan(&m); err != nil || !m.Valid || m.String == "" {
+		return "flexible"
+	}
+	switch m.String {
+	case "lock_auto", "lock_manual":
+		return m.String
+	}
+	return "flexible"
+}
+
+// SetMemberModePolicy sets the employer's mode policy and records an audit row.
+// policy must be "flexible", "lock_auto", or "lock_manual".
+func (s *Store) SetMemberModePolicy(companyID, userID int64, policy string, actorID int64, actorName string) error {
+	switch policy {
+	case "flexible", "lock_auto", "lock_manual":
+	default:
+		policy = "flexible"
+	}
+	old := s.MemberModePolicy(companyID, userID)
+	_, err := s.db.Exec(`INSERT INTO member_settings (company_id, user_id, mode_policy, updated_at) VALUES (?,?,?,?)
+		ON CONFLICT(company_id, user_id) DO UPDATE SET mode_policy = excluded.mode_policy, updated_at = excluded.updated_at`, companyID, userID, policy, ts(time.Now()))
+	if err != nil {
+		return err
+	}
+	if old != policy {
+		s.db.Exec(`INSERT INTO member_setting_audit (company_id, user_id, field, old_value, new_value, actor_id, actor_name, at) VALUES (?,?,?,?,?,?,?,?)`,
+			companyID, userID, "mode_policy", old, policy, actorID, actorName, ts(time.Now()))
 	}
 	return nil
 }

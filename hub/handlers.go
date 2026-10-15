@@ -91,6 +91,7 @@ func (s *Server) handleHeartbeat(w http.ResponseWriter, r *http.Request, d *Devi
 		"screenshot_interval_seconds": s.store.EffectiveScreenshotInterval(d.CompanyID, d.UserID),
 		"tracking_enabled":            s.store.ActivityEnabled(d.CompanyID) && s.store.MemberTrackingEnabled(d.CompanyID, d.UserID),
 		"tracking_mode":               s.store.MemberTrackingMode(d.CompanyID, d.UserID),
+		"mode_policy":                 s.store.MemberModePolicy(d.CompanyID, d.UserID),
 		"screenshot_quality":          s.store.GetSettings(d.CompanyID).ScreenshotQuality,
 		"screenshot_max_width":        s.store.GetSettings(d.CompanyID).ScreenshotMaxWidth,
 	})

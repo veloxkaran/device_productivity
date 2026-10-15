@@ -83,6 +83,7 @@ func (s *Syncer) sendHeartbeat() {
 			ScreenshotMaxWidth        int     `json:"screenshot_max_width"`
 			TrackingEnabled           *bool   `json:"tracking_enabled"`
 			TrackingMode              *string `json:"tracking_mode"`
+			ModePolicy                *string `json:"mode_policy"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<14)).Decode(&out); err != nil {
@@ -105,9 +106,14 @@ func (s *Syncer) sendHeartbeat() {
 			log.Printf("cloud: activity module disabled by employer — screenshots and activity paused")
 		}
 	}
-	if out.Data.TrackingMode != nil {
-		s.applyTrackingMode(*out.Data.TrackingMode)
+	if out.Data.ModePolicy != nil {
+		monitor.SetModePolicy(*out.Data.ModePolicy)
 	}
+	mode := ""
+	if out.Data.TrackingMode != nil {
+		mode = *out.Data.TrackingMode
+	}
+	s.applyTrackingMode(mode)
 }
 
 // applyTrackingMode reacts to the per-member mode reported by the hub. In "auto"
@@ -116,18 +122,16 @@ func (s *Syncer) sendHeartbeat() {
 // on rather than a Clock In press. Switching back to "manual" hands control to
 // the user again (a session already open is left running until stopped).
 func (s *Syncer) applyTrackingMode(mode string) {
-	// The person's own choice in the app wins; only let the hub set the mode
-	// when the user hasn't locked it locally.
-	if !monitor.UserModeLocked() {
-		auto := mode == "auto"
-		was := monitor.AutoMode()
-		if auto != was {
-			monitor.SetAutoMode(auto)
-			if auto {
-				log.Printf("cloud: tracking mode set to AUTO by employer — tracking follows device power")
-			} else {
-				log.Printf("cloud: tracking mode set to MANUAL by employer — Clock In required")
-			}
+	// Precedence: an employer lock wins over everything; otherwise (flexible) the
+	// person's own app choice wins; otherwise fall back to the member's mode.
+	switch monitor.ModePolicy() {
+	case "lock_auto":
+		monitor.SetAutoMode(true)
+	case "lock_manual":
+		monitor.SetAutoMode(false)
+	default: // flexible
+		if !monitor.UserModeLocked() && mode != "" {
+			monitor.SetAutoMode(mode == "auto")
 		}
 	}
 	// Auto-clock-in follows the effective mode regardless of who set it.

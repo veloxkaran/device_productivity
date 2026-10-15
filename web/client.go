@@ -297,6 +297,8 @@ func (c *Client) handleState(w http.ResponseWriter, r *http.Request) {
 		"screen_permission": capture.ScreenPermission(),
 		"capture":           capture.CurrentStatus(),
 		"auto_mode":         monitor.AutoMode(),
+		"mode_policy":       monitor.ModePolicy(),
+		"mode_locked":       monitor.ModeLocked(),
 		"managed":           cfg.Managed,
 	}
 	if cur != nil {
@@ -583,6 +585,10 @@ func (c *Client) handleMode(w http.ResponseWriter, r *http.Request) {
 	json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&in)
 	if in.Mode != "auto" && in.Mode != "manual" {
 		jsonErr(w, http.StatusUnprocessableEntity, "mode must be manual or auto")
+		return
+	}
+	if monitor.ModeLocked() {
+		jsonErr(w, http.StatusConflict, "Tracking mode is set by your workspace.")
 		return
 	}
 	auto := in.Mode == "auto"

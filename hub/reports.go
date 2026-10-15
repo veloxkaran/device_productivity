@@ -1132,7 +1132,7 @@ func memberSettingsPayload(s *Server, companyID, userID int64) map[string]any {
 			})
 		}
 	}
-	return map[string]any{"user_id": userID, "devices": devs, "member_tracking_enabled": s.store.MemberTrackingEnabled(companyID, userID), "company_activity_enabled": s.store.ActivityEnabled(companyID), "screenshot_interval_seconds": override, "company_screenshot_interval_seconds": company, "effective_screenshot_interval_seconds": effective, "tracking_mode": s.store.MemberTrackingMode(companyID, userID), "mode_audit": s.store.MemberModeAudit(companyID, userID, 10)}
+	return map[string]any{"user_id": userID, "devices": devs, "member_tracking_enabled": s.store.MemberTrackingEnabled(companyID, userID), "company_activity_enabled": s.store.ActivityEnabled(companyID), "screenshot_interval_seconds": override, "company_screenshot_interval_seconds": company, "effective_screenshot_interval_seconds": effective, "tracking_mode": s.store.MemberTrackingMode(companyID, userID), "mode_policy": s.store.MemberModePolicy(companyID, userID), "mode_audit": s.store.MemberModeAudit(companyID, userID, 10)}
 }
 
 func (s *Server) handleGetMemberSettings(w http.ResponseWriter, r *http.Request, e *Employer, companyID int64) {
@@ -1167,6 +1167,7 @@ func (s *Server) handleSaveMemberSettings(w http.ResponseWriter, r *http.Request
 	var in struct {
 		ScreenshotIntervalSeconds *int    `json:"screenshot_interval_seconds"`
 		TrackingMode              *string `json:"tracking_mode"`
+		ModePolicy                *string `json:"mode_policy"`
 		TrackingEnabled           *bool   `json:"tracking_enabled"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&in); err != nil {
@@ -1181,6 +1182,17 @@ func (s *Server) handleSaveMemberSettings(w http.ResponseWriter, r *http.Request
 		}
 		if err := s.store.SetMemberTrackingMode(companyID, userID, m, e.UserID, e.Name); err != nil {
 			writeErr(w, http.StatusInternalServerError, "could not save tracking mode")
+			return
+		}
+	}
+	if in.ModePolicy != nil {
+		p := *in.ModePolicy
+		if p != "flexible" && p != "lock_auto" && p != "lock_manual" {
+			writeErr(w, http.StatusUnprocessableEntity, "mode_policy must be flexible, lock_auto or lock_manual")
+			return
+		}
+		if err := s.store.SetMemberModePolicy(companyID, userID, p, e.UserID, e.Name); err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not save mode policy")
 			return
 		}
 	}

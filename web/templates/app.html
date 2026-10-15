@@ -334,7 +334,9 @@ main{padding:18px 16px 14px}
     }
     b.classList.toggle('brk-on', S.on_break);
     $('breakTxt').textContent = S.on_break ? 'End Break' : 'Break';
-    $('modeSec').style.display = 'flex';
+    // Hide the toggle when the employer has locked the mode; the auto-note or
+    // Start/End already reflect the locked state.
+    $('modeSec').style.display = S.mode_locked ? 'none' : 'flex';
     $('modeManual').classList.toggle('on', !S.auto_mode);
     $('modeManual').setAttribute('aria-checked', String(!S.auto_mode));
     $('modeAuto').classList.toggle('on', S.auto_mode);
