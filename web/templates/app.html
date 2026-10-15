@@ -59,11 +59,6 @@ label.lbl{display:flex;justify-content:space-between;align-items:center;font-wei
 .pill.stop{background:var(--brand);color:#fff}.pill.stop:hover{background:var(--brand-dark)}
 .pill.stop .dot{color:var(--brand)}
 .pill.sm{height:44px;padding:0 22px;font-size:15px;font-weight:500}
-.mode{margin-top:20px;display:flex;flex-direction:column;align-items:center;gap:8px}
-.mode-label{font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-2)}
-.seg{display:inline-flex;background:var(--soft);border-radius:999px;padding:3px}
-.seg-btn{padding:7px 18px;border-radius:999px;font-size:13px;font-weight:600;color:var(--ink-2);background:transparent;transition:background .15s,color .15s;cursor:pointer}
-.seg-btn.on{background:var(--brand);color:#fff}
 .pill.brk-on{background:#FEF0C7;color:#93370D}
 .card{margin-top:auto;border:1px solid var(--line);border-radius:12px;box-shadow:0 1px 3px rgba(16,24,40,.06)}
 .card-body{display:flex;align-items:center;justify-content:space-between;padding:16px 18px;gap:12px}
@@ -210,13 +205,6 @@ main{padding:18px 16px 14px}
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
           <span>Automatic tracking is on — it starts whenever the app is open.</span>
         </div>
-        <div class="mode" id="modeSec" style="display:none">
-          <span class="mode-label">Tracking</span>
-          <div class="seg" role="radiogroup" aria-label="Tracking mode">
-            <button type="button" class="seg-btn" id="modeManual" role="radio">Manual</button>
-            <button type="button" class="seg-btn" id="modeAuto" role="radio">Automatic</button>
-          </div>
-        </div>
       </div>
       <div class="card" style="margin-top:auto;background:transparent;border:0">
         <div class="card-body" style="display:none">
@@ -336,13 +324,6 @@ main{padding:18px 16px 14px}
     }
     b.classList.toggle('brk-on', S.on_break);
     $('breakTxt').textContent = S.on_break ? 'End Break' : 'Break';
-    // Hide the toggle when the employer has locked the mode; the auto-note or
-    // Start/End already reflect the locked state.
-    $('modeSec').style.display = S.mode_locked ? 'none' : 'flex';
-    $('modeManual').classList.toggle('on', !S.auto_mode);
-    $('modeManual').setAttribute('aria-checked', String(!S.auto_mode));
-    $('modeAuto').classList.toggle('on', S.auto_mode);
-    $('modeAuto').setAttribute('aria-checked', String(!!S.auto_mode));
     const cap = S.capture || {};
     const recentOk = cap.last_success && (!cap.last_error_at || new Date(cap.last_success) > new Date(cap.last_error_at));
     $('perm').classList.toggle('show', S.screen_permission === 'denied' && !recentOk);
@@ -405,13 +386,6 @@ main{padding:18px 16px 14px}
   $('fLogin').addEventListener('submit', (e) => { e.preventDefault(); doLogin(0); });
   $('eye').onclick = () => { const p = $('pw'); p.type = p.type === 'password' ? 'text' : 'password'; };
   $('btnToggle').onclick = async () => { if (busy || !S) return; await action(S.clocked_in ? 'stop' : 'start')(); };
-  const setMode = async (m) => {
-    if (busy || !S || S.auto_mode === (m === 'auto')) return;
-    busy = true;
-    try { await api('mode', { mode: m }); await refresh(); } catch (e) { toast(e.message); } finally { busy = false; }
-  };
-  $('modeManual').onclick = () => setMode('manual');
-  $('modeAuto').onclick = () => setMode('auto');
   $('btnBreak').onclick = action('break');
   $('btnResume').onclick = action('idle', () => ({ reason: $('reason').value, note: $('note').value }));
   $('reason').onchange = () => { $('noteWrap').style.display = $('reason').value === 'Other' ? '' : 'none'; };
