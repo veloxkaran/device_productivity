@@ -227,7 +227,7 @@ main{padding:18px 16px 14px}
           <div class="avatar" id="uAvatar">?</div>
         </div>
         <div class="shot" id="shotStatus"></div>
-        <div class="card-foot" style="border-top:0;justify-content:flex-end"><span id="verTrack" style="display:none">version</span><span class="badge-live" id="live" style="display:none"><i></i><span>Synced</span></span><a href="#" class="link" id="lnkQuit" style="font-size:12px">Quit</a></div>
+        <div class="card-foot" style="border-top:0;justify-content:flex-end"><span id="verTrack">version</span><span class="badge-live" id="live" style="display:none"><i></i><span>Synced</span></span><a href="#" class="link" id="lnkQuit" style="font-size:12px">Quit</a></div>
       </div>
     </section>
 
@@ -288,7 +288,9 @@ main{padding:18px 16px 14px}
 
   function render() {
     if (!S) return;
-    $('verLogin').textContent = $('verTrack').textContent = 'Version ' + S.version;
+    $('verLogin').textContent = 'Version ' + S.version;
+    const modeLabel = S.mode_locked ? (S.auto_mode ? 'Automatic (locked)' : 'Manual (locked)') : (S.auto_mode ? 'Automatic' : 'Manual');
+    $('verTrack').textContent = 'v' + S.version + ' · ' + modeLabel;
     const vs = $('verSetup'); if (vs) vs.textContent = 'Version ' + S.version;
     const hdr = $('hdr');
     if (!S.signed_in) {
