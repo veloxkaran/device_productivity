@@ -127,3 +127,15 @@ echo; echo "== verify fresh through Cloudflare =="
 curl -sI "$HUB_URL/downloads/MyMonitor-GUI-Setup-windows-amd64-v${V}.zip" | grep -iE "content-length|cf-cache-status" || true
 echo; echo "DONE. Version $V"
 echo "Windows x64 install URL: $HUB_URL/downloads/MyMonitor-GUI-Setup-windows-amd64-v${V}.zip"
+echo
+echo "=================================================================="
+echo " ⚠  WINDOWS + LINUX are now live for v$V."
+echo " ⚠  macOS is NOT built by this script (needs a real Mac to sign)."
+echo
+echo "    On a Mac, run:"
+echo "      cd device_productivity && make installer-gui-macos-prod"
+echo "      scp dist/MyMonitor-GUI-Setup-macos.zip \\"
+echo "        root@152.53.124.158:$PWD/downloads/MyMonitor-GUI-Setup-macos-v$V.zip"
+echo
+echo "    Until then, macOS users still get the OLD build."
+echo "=================================================================="
