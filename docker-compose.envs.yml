@@ -1,0 +1,48 @@
+# Two hubs on one server -- staging and production -- from the same image.
+#
+# They MUST be separate: hub data is keyed by Hajir company/user ids, and the
+# staging and production databases reuse the same ids, so one shared hub would
+# mix two companies' activity together.
+#
+#   docker compose -f docker-compose.envs.yml up -d --build
+#
+# Each reads its own env file (HAJIR_API_URL, HUB_PUBLIC_URL,
+# HUB_ALLOWED_ORIGINS, HUB_INTERNAL_KEY) and keeps its own volume. Put a reverse
+# proxy (Cloudflare / nginx) in front: staging hub URL -> :4010, production
+# hub URL -> :4011.
+services:
+  hub-staging:
+    build:
+      context: .
+    image: hajir-hub:latest
+    container_name: hajir-hub-staging
+    restart: unless-stopped
+    env_file: .env.staging
+    environment:
+      HUB_ADDR: ":4010"
+      HUB_DATA_DIR: "/data"
+    ports:
+      - "4010:4010"
+    volumes:
+      - hub-data-staging:/data
+      - ./hub-data/downloads:/data/downloads:ro
+
+  hub-production:
+    image: hajir-hub:latest
+    container_name: hajir-hub-production
+    restart: unless-stopped
+    depends_on:
+      - hub-staging
+    env_file: .env.prod-hub
+    environment:
+      HUB_ADDR: ":4010"
+      HUB_DATA_DIR: "/data"
+    ports:
+      - "4011:4010"
+    volumes:
+      - hub-data-production:/data
+      - ./hub-data/downloads:/data/downloads:ro
+
+volumes:
+  hub-data-staging:
+  hub-data-production:

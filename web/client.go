@@ -327,6 +327,33 @@ func (c *Client) postJSON(url, token string, body any, out any) (int, error) {
 // device token (the Automatic / covert install path). No username or password.
 // On success the device becomes managed: it runs headless and the menu-bar icon
 // is removed.
+// KnownHubs is the comma-separated list of hubs a device token might belong to.
+// The build's own hub is always tried first; this covers the rest. Override at
+// build time with -X my-monitor/web.KnownHubs="https://a,https://b".
+var KnownHubs = "http://localhost:4010,https://monitor.veloxlabs.net"
+
+// candidateHubs returns the hubs to try when provisioning, most-likely first and
+// de-duplicated: the build-time hub, then each entry in KnownHubs.
+func (c *Client) candidateHubs() []string {
+	c.mu.Lock()
+	primary := strings.TrimRight(c.cfg.HubURL, "/")
+	c.mu.Unlock()
+	seen := map[string]bool{}
+	var out []string
+	add := func(u string) {
+		u = strings.TrimRight(strings.TrimSpace(u), "/")
+		if u != "" && !seen[u] {
+			seen[u] = true
+			out = append(out, u)
+		}
+	}
+	add(primary)
+	for _, u := range strings.Split(KnownHubs, ",") {
+		add(u)
+	}
+	return out
+}
+
 func (c *Client) handleProvision(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonErr(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -340,22 +367,30 @@ func (c *Client) handleProvision(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := strings.TrimSpace(in.Token)
-	c.mu.Lock()
-	hub := strings.TrimRight(c.cfg.HubURL, "/")
-	c.mu.Unlock()
 
-	// Verify the token against the hub before committing it.
-	code, err := c.postJSON(hub+"/api/heartbeat", token, map[string]any{"status": "offline", "platform": runtime.GOOS, "app_version": cloud.AppVersion}, nil)
-	if err != nil {
-		jsonErr(w, http.StatusBadGateway, "Can't reach the activity server. Check the connection.")
-		return
+	// The device token belongs to exactly one hub. Instead of asking the user
+	// for the hub URL, try the known hubs (the build's own hub plus KnownHubs)
+	// and use whichever one accepts the token. One token works in any
+	// environment, no hub URL to paste.
+	var hub string
+	reached := false
+	for _, cand := range c.candidateHubs() {
+		code, err := c.postJSON(cand+"/api/heartbeat", token, map[string]any{"status": "offline", "platform": runtime.GOOS, "app_version": cloud.AppVersion}, nil)
+		if err != nil {
+			continue // hub unreachable; try the next one
+		}
+		reached = true
+		if code == http.StatusOK {
+			hub = cand
+			break
+		}
 	}
-	if code == http.StatusUnauthorized {
+	if hub == "" {
+		if !reached {
+			jsonErr(w, http.StatusBadGateway, "Can't reach the activity server. Check the connection.")
+			return
+		}
 		jsonErr(w, http.StatusUnauthorized, "Invalid or revoked device token.")
-		return
-	}
-	if code != http.StatusOK {
-		jsonErr(w, http.StatusBadGateway, "Server rejected the token. Try again.")
 		return
 	}
 	if err := c.mgr.Apply(cloud.Config{URL: hub, SyncToken: token, Managed: true}, true); err != nil {

@@ -39,6 +39,7 @@ type Device struct {
 	IsClockedIn     bool
 	RevokedAt       *time.Time
 	CreatedAt       time.Time
+	TokenRotatedAt  *time.Time
 }
 
 type TimeEntry struct {
@@ -136,7 +137,15 @@ CREATE TABLE IF NOT EXISTS screenshots (
 );
 CREATE INDEX IF NOT EXISTS idx_shots_company ON screenshots(company_id, user_id, captured_at);
 `)
-	return err
+	if err != nil {
+		return err
+	}
+	if !s.hasColumn("devices", "token_rotated_at") {
+		if _, err := s.db.Exec(`ALTER TABLE devices ADD COLUMN token_rotated_at TEXT`); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func hashToken(token string) string {
@@ -152,14 +161,14 @@ func newToken() (string, error) {
 	return "hdv_" + hex.EncodeToString(b), nil
 }
 
-const deviceCols = `id, company_id, user_id, employee_name, name, platform, app_version, last_seen_at, last_status, last_idle_seconds, last_app, is_clocked_in, revoked_at, created_at`
+const deviceCols = `id, company_id, user_id, employee_name, name, platform, app_version, last_seen_at, last_status, last_idle_seconds, last_app, is_clocked_in, revoked_at, created_at, token_rotated_at`
 
 func scanDevice(sc interface{ Scan(...any) error }) (*Device, error) {
 	var d Device
-	var seen, revoked sql.NullString
+	var seen, revoked, rotated sql.NullString
 	var created string
 	var clocked int
-	if err := sc.Scan(&d.ID, &d.CompanyID, &d.UserID, &d.EmployeeName, &d.Name, &d.Platform, &d.AppVersion, &seen, &d.LastStatus, &d.LastIdleSeconds, &d.LastApp, &clocked, &revoked, &created); err != nil {
+	if err := sc.Scan(&d.ID, &d.CompanyID, &d.UserID, &d.EmployeeName, &d.Name, &d.Platform, &d.AppVersion, &seen, &d.LastStatus, &d.LastIdleSeconds, &d.LastApp, &clocked, &revoked, &created, &rotated); err != nil {
 		return nil, err
 	}
 	d.IsClockedIn = clocked == 1
@@ -171,6 +180,10 @@ func scanDevice(sc interface{ Scan(...any) error }) (*Device, error) {
 	if revoked.Valid {
 		t := parseTS(revoked.String)
 		d.RevokedAt = &t
+	}
+	if rotated.Valid {
+		t := parseTS(rotated.String)
+		d.TokenRotatedAt = &t
 	}
 	return &d, nil
 }
@@ -403,6 +416,26 @@ func (s *Store) Samples(companyID, userID, deviceID int64, from, to time.Time) (
 func (s *Store) Screenshots(companyID, userID int64, from, to time.Time) ([]Screenshot, error) {
 	rows, err := s.db.Query(`SELECT id, device_id, company_id, user_id, captured_at, path, size_bytes FROM screenshots
 		WHERE company_id = ? AND user_id = ? AND captured_at >= ? AND captured_at < ? ORDER BY captured_at DESC`, companyID, userID, ts(from), ts(to))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []Screenshot
+	for rows.Next() {
+		var sh Screenshot
+		var at string
+		if err := rows.Scan(&sh.ID, &sh.DeviceID, &sh.CompanyID, &sh.UserID, &at, &sh.Path, &sh.SizeBytes); err != nil {
+			return nil, err
+		}
+		sh.CapturedAt = parseTS(at)
+		list = append(list, sh)
+	}
+	return list, rows.Err()
+}
+
+func (s *Store) DeviceScreenshots(companyID, deviceID int64, from, to time.Time) ([]Screenshot, error) {
+	rows, err := s.db.Query(`SELECT id, device_id, company_id, user_id, captured_at, path, size_bytes FROM screenshots
+		WHERE company_id = ? AND device_id = ? AND captured_at >= ? AND captured_at < ? ORDER BY captured_at DESC`, companyID, deviceID, ts(from), ts(to))
 	if err != nil {
 		return nil, err
 	}
@@ -947,6 +980,24 @@ func (s *Store) IdleReports(companyID, userID int64, from, to time.Time) ([]Idle
 		list = append(list, r)
 	}
 	return list, rows.Err()
+}
+
+// RotateDeviceTokenByID issues a fresh token for one device (by id), clearing any
+// revoked state so the device can reconnect with the new token.
+func (s *Store) RotateDeviceTokenByID(companyID, id int64) (*Device, string, error) {
+	token, err := newToken()
+	if err != nil {
+		return nil, "", err
+	}
+	res, err := s.db.Exec(`UPDATE devices SET token_hash = ?, revoked_at = NULL, token_rotated_at = ? WHERE id = ? AND company_id = ?`, hashToken(token), ts(time.Now()), id, companyID)
+	if err != nil {
+		return nil, "", err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return nil, "", sql.ErrNoRows
+	}
+	d, err := s.DeviceByID(id)
+	return d, token, err
 }
 
 func (s *Store) RotateDeviceToken(companyID, userID int64, name, employeeName, platform string) (*Device, string, error) {

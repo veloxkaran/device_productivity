@@ -30,11 +30,24 @@ VIAddVersionKey "LegalCopyright" "Velox Labs"
 VIAddVersionKey "FileDescription" "${APPNAME} Installer"
 
 !define MUI_ABORTWARNING
+
+; ── Welcome ────────────────────────────────────────────────────────
+!define MUI_WELCOMEPAGE_TITLE "Welcome to ${APPNAME} Setup"
+!define MUI_WELCOMEPAGE_TEXT "This will install ${APPNAME} on your computer.$\r$\n$\r$\nIt runs quietly in the system tray and starts automatically when you sign in. You can open it any time from the tray icon, and your data stays on this device.$\r$\n$\r$\nClick Next to continue."
 !insertmacro MUI_PAGE_WELCOME
+
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
+
+; ── Finish ─────────────────────────────────────────────────────────
+; The "open now" option is UNCHECKED by default (MUI_FINISHPAGE_RUN_NOTCHECKED),
+; so finishing the install never opens a window or browser on its own. The user
+; opts in if they want it; otherwise the app just waits in the system tray.
+!define MUI_FINISHPAGE_TITLE "Installation complete"
+!define MUI_FINISHPAGE_TEXT "${APPNAME} is installed and will start automatically when you sign in.$\r$\n$\r$\nYou can open it any time from the system-tray icon."
 !define MUI_FINISHPAGE_RUN "$INSTDIR\MyMonitor.exe"
-!define MUI_FINISHPAGE_RUN_TEXT "Start ${APPNAME} now"
+!define MUI_FINISHPAGE_RUN_TEXT "Open ${APPNAME} now"
+!define MUI_FINISHPAGE_RUN_NOTCHECKED
 !insertmacro MUI_PAGE_FINISH
 
 !insertmacro MUI_UNPAGE_CONFIRM

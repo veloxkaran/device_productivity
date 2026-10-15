@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hajir Tracker Setup</title>
+<style>
+  :root{
+    --bg:#0f1420; --win:#131a28; --panel:#0f2d57; --panel2:#0c2140;
+    --ink:#e8ecf3; --muted:#93a0b4; --line:#243040; --brand:#2f6fe0;
+    --brand-ink:#fff; --ok:#1f9d57; --track:#1d2635; --chip:#17202e;
+    --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font);
+    display:flex;flex-direction:column;overflow:hidden;font-size:14px}
+  .body{flex:1;display:grid;grid-template-columns:200px 1fr;min-height:0}
+  .rail{background:var(--panel);background:linear-gradient(180deg,var(--panel),var(--panel2));
+    padding:22px 18px;display:flex;flex-direction:column;gap:20px}
+  .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:1.05rem}
+  .logo .mark{width:34px;height:34px;border-radius:8px;background:var(--brand);
+    display:grid;place-items:center;color:#fff;font-weight:800;font-size:1.05rem}
+  .steps{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:14px;font-size:.9rem}
+  .steps li{display:flex;align-items:center;gap:11px;opacity:.45;color:#cdd8ea}
+  .steps li.on{opacity:1;font-weight:600}
+  .steps li.done{opacity:.8}
+  .steps .n{width:24px;height:24px;border-radius:50%;border:1.5px solid currentColor;
+    display:grid;place-items:center;font-size:.72rem;flex:none}
+  .steps li.done .n{background:#cdd8ea;color:var(--panel);border-color:#cdd8ea}
+  .rail .foot{margin-top:auto;font-size:.72rem;opacity:.55}
+  .pane{padding:30px 34px;display:flex;flex-direction:column;min-width:0}
+  .pane h2{margin:0 0 10px;font-size:1.5rem;text-wrap:balance}
+  .pane p{margin:0 0 16px;color:var(--muted);font-size:.95rem;line-height:1.6;max-width:46ch}
+  .facts{display:flex;flex-direction:column;gap:13px;margin-top:4px}
+  .facts div{display:flex;align-items:flex-start;gap:12px;font-size:.95rem;line-height:1.4}
+  .facts .ic{width:22px;height:22px;flex:none;color:var(--brand);margin-top:1px}
+  .field{margin:8px 0}
+  .field label{display:block;font-size:.72rem;color:var(--muted);margin-bottom:6px;
+    text-transform:uppercase;letter-spacing:.07em}
+  .pathbox{padding:11px 13px;border:1px solid var(--line);border-radius:8px;background:var(--chip);
+    font-size:.9rem;word-break:break-all;color:var(--ink)}
+  .progwrap{margin:18px 0 8px;max-width:46ch}
+  .track{height:10px;border-radius:999px;background:var(--track);overflow:hidden;position:relative}
+  .bar{position:absolute;left:0;top:0;bottom:0;width:38%;background:var(--brand);border-radius:999px;
+    animation:slide 1.1s ease-in-out infinite}
+  @keyframes slide{0%{left:-40%}100%{left:100%}}
+  .plog{font-size:.85rem;color:var(--muted);margin-top:12px;min-height:1.2em}
+  .done-badge{width:54px;height:54px;border-radius:50%;background:var(--ok);display:grid;
+    place-items:center;color:#fff;margin-bottom:14px}
+  .opt{display:flex;align-items:flex-start;gap:12px;padding:14px;border:1px solid var(--line);
+    border-radius:10px;background:var(--chip);margin-top:6px;max-width:46ch;cursor:pointer}
+  .opt input{margin-top:2px;width:17px;height:17px;accent-color:var(--brand);flex:none}
+  .opt .t{font-size:.92rem;line-height:1.45}
+  .opt .hint{display:block;color:var(--muted);font-size:.8rem;margin-top:3px}
+  .err{color:#ff6b6b;font-size:.88rem;margin-top:10px;max-width:46ch;white-space:pre-wrap}
+  .actions{padding:16px 34px;border-top:1px solid var(--line);display:flex;justify-content:flex-end;gap:12px}
+  .btn{padding:11px 26px;border-radius:9px;font-size:.92rem;font-weight:600;cursor:pointer;
+    border:1px solid var(--line);background:transparent;color:var(--ink);font-family:var(--font)}
+  .btn.primary{background:var(--brand);color:var(--brand-ink);border-color:var(--brand)}
+  .btn:disabled{opacity:.4;cursor:default}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+  <div class="body">
+    <aside class="rail">
+      <div class="logo"><span class="mark">H</span>Hajir</div>
+      <ul class="steps" id="steps">
+        <li data-s="0" class="on"><span class="n">1</span>Welcome</li>
+        <li data-s="1"><span class="n">2</span>Location</li>
+        <li data-s="2"><span class="n">3</span>Install</li>
+        <li data-s="3"><span class="n">4</span>Finish</li>
+      </ul>
+      <div class="foot" id="foot">Velox Labs</div>
+    </aside>
+    <section class="pane" id="pane"></section>
+  </div>
+  <div class="actions">
+    <button class="btn" id="back" disabled>Back</button>
+    <button class="btn primary" id="next">Next</button>
+  </div>
+
+<script>
+  const svg = (p)=>`<svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${p}</svg>`;
+  const check = '<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+  let info = {version:"", os:"", installDir:""};
+  let i = 0, installDone = false, installing = false, lastErr = "";
+
+  const pane=document.getElementById('pane'), back=document.getElementById('back'),
+        next=document.getElementById('next'), steps=[...document.querySelectorAll('#steps li')],
+        foot=document.getElementById('foot');
+
+  const screens = [
+    ()=>({ h:"Welcome to Hajir Tracker", next:"Next", body:`
+      <p>This will install the Hajir attendance &amp; activity tracker on your computer. It runs quietly in the background and starts automatically when you sign in.</p>
+      <div class="facts">
+        <div>${svg('<path d="M20 6 9 17l-5-5"/>')}<span>Lives in the background — open it whenever you need it.</span></div>
+        <div>${svg('<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>')}<span>Starts automatically at login.</span></div>
+        <div>${svg('<path d="M12 2 4 6v6c0 5 3.5 8 8 10 4.5-2 8-5 8-10V6z"/>')}<span>Your data stays on this device.</span></div>
+      </div>`}),
+    ()=>({ h:"Install location", next:"Install", body:`
+      <p>Hajir Tracker will be installed in the folder below.</p>
+      <div class="field"><label>Destination</label><div class="pathbox">${info.installDir||"…"}</div></div>`}),
+    ()=>({ h: installDone?"Installed":"Installing…", next:"Next", body:`
+      <p>${installDone?"Finishing up.":"Please wait while Hajir Tracker is installed. This only takes a moment."}</p>
+      <div class="progwrap"><div class="track">${installDone?'':'<div class="bar"></div>'}</div>
+      <div class="plog" id="plog">${installDone?"Done.":"Copying files…"}</div></div>
+      ${lastErr?`<div class="err">${lastErr}</div>`:''}`}),
+    ()=>({ h:"Installation complete", next:"Finish", body:`
+      <div class="done-badge">${check}</div>
+      <p>Hajir Tracker is installed and will start automatically when you sign in. You can open it any time from the ${info.os==='darwin'?'menu bar':'system-tray icon'}.</p>
+      <label class="opt"><input type="checkbox" id="openNow">
+        <span class="t">Open Hajir Tracker now
+          <span class="hint">Unchecked by default — finishing won't open anything on its own.</span>
+        </span>
+      </label>`})
+  ];
+
+  function render(){
+    const s = screens[i]();
+    pane.innerHTML = `<h2>${s.h}</h2>${s.body}`;
+    steps.forEach((li,x)=>{li.classList.toggle('on',x===i);li.classList.toggle('done',x<i);});
+    back.disabled = (i===0 || i===2);
+    next.textContent = s.next;
+    next.disabled = (i===2 && !installDone);
+    if(i===2 && !installDone && !installing) runInstall();
+  }
+
+  async function runInstall(){
+    installing = true; lastErr = "";
+    try{
+      const r = await fetch('/api/install',{method:'POST'});
+      const j = await r.json().catch(()=>({}));
+      if(!r.ok){ throw new Error(j.error || ('Installer exited with an error.')); }
+      installDone = true;
+      i = 3; render();
+    }catch(e){
+      lastErr = String(e.message||e) + "\n\nClose this window and try again, or contact your administrator.";
+      installing = false; render();
+    }
+  }
+
+  async function finish(){
+    const open = !!document.getElementById('openNow')?.checked;
+    next.disabled = true;
+    try{ await fetch('/api/finish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({open})}); }catch(e){}
+    try{ window.close(); }catch(e){}
+    document.body.innerHTML = '<div style="height:100%;display:grid;place-items:center;color:#93a0b4">You can close this window.</div>';
+  }
+
+  next.addEventListener('click',()=>{
+    if(i===3){ finish(); return; }
+    if(i===2){ return; }            // Install advances itself
+    i++; render();
+  });
+  back.addEventListener('click',()=>{ if(i>0 && i!==2){ i--; render(); } });
+
+  fetch('/api/info').then(r=>r.json()).then(d=>{
+    info = d; foot.textContent = 'Velox Labs · v'+(d.version||'');
+    render();
+  }).catch(()=>render());
+</script>
+</body>
+</html>

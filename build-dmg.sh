@@ -238,9 +238,10 @@ My Monitor v${VERSION}
 ──────────────────────
 1. Drag MyMonitor.app to the Applications folder.
 2. Double-click MyMonitor in Applications to start.
-3. Your browser will open http://localhost:${PORT} automatically.
-4. Default login: admin / admin
-   ⚠ Change your password in the Setup wizard!
+3. My Monitor runs in the menu bar — click its icon to open the tracker.
+   It does not open a browser on its own.
+4. To view the dashboard, open http://localhost:${PORT} in your browser.
+   Default login: admin / admin  (⚠ change your password in Setup!)
 
 To uninstall: double-click "Uninstall MyMonitor.command" in this disk image
 (or just delete MyMonitor.app from Applications).

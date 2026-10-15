@@ -20,3 +20,9 @@ _*.jsx
 build-dmg.sh
 scripts-dev-cert.sh
 cmd/installer-*/asset.bin
+
+# stray broken file left by an old sed -i run
+sedMSpOWs
+sed*
+# Android app (built separately with make package-android)
+mobile

@@ -45,7 +45,9 @@ func (sc Scope) May(a activityAction) bool {
 }
 
 func (sc Scope) Allows(userID int64) bool {
-	return sc.IsOwner || sc.MemberIDs == nil || sc.MemberIDs[userID]
+	// userID 0 is an external (non-employee) device: it belongs to no department,
+	// so make it visible to anyone with device-activity access, not just owners.
+	return sc.IsOwner || sc.MemberIDs == nil || userID == 0 || sc.MemberIDs[userID]
 }
 
 func (sc Scope) Scoped() bool { return !sc.IsOwner && sc.MemberIDs != nil }

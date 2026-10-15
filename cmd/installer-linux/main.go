@@ -78,6 +78,20 @@ func runInstall(token, hubURL string, silent bool) {
 	dataDir := filepath.Join(installDir, "data")
 
 	printBanner()
+
+	// Interactive desktop install: drive a graphical flow when one is available.
+	if !silent && guiEnv() {
+		if !guiWelcome() {
+			os.Exit(0)
+		}
+		useGUI = true
+	}
+	var guiStop func()
+	if useGUI {
+		guiStop = guiProgress()
+		defer guiStop()
+	}
+
 	fmt.Printf("  Install directory : %s\n", installDir)
 	fmt.Printf("  Data directory    : %s\n", dataDir)
 	fmt.Println()
@@ -138,9 +152,17 @@ func runInstall(token, hubURL string, silent bool) {
 				break
 			}
 		}
+		if useGUI {
+			if guiStop != nil {
+				guiStop()
+			}
+			printDone()
+			guiFinish(fmt.Sprintf("http://localhost:%d", port))
+			return
+		}
 		if tcpReady() {
 			ok(fmt.Sprintf("Running at http://localhost:%d", port))
-			exec.Command("xdg-open", fmt.Sprintf("http://localhost:%d/setup", port)).Start()
+			info(fmt.Sprintf("The tracker window opens on its own; or visit http://localhost:%d", port))
 		} else {
 			warn("App started but port not yet open — may still be loading.")
 		}

@@ -1,0 +1,65 @@
+// Hajir Tracker for Android — mobile agent for the Device Activity hub.
+// Uses AGP 9 built-in Kotlin support (no separate kotlin-android plugin).
+plugins {
+    id 'com.android.application'
+}
+
+def prop = { String k -> (project.findProperty(k) ?: System.getenv(k) ?: '').toString() }
+
+android {
+    namespace = 'com.veloxlab.hajirtracker'
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = 'com.veloxlab.hajirtracker'
+        minSdk = 24
+        targetSdk = 36
+        versionCode = prop('APP_VERSION_CODE').toInteger()
+        versionName = prop('APP_VERSION')
+        buildConfigField 'String', 'HAJIR_API_URL', "\"${prop('HAJIR_API_URL')}\""
+        buildConfigField 'String', 'HUB_URL', "\"${prop('HUB_URL')}\""
+    }
+
+    buildFeatures { buildConfig = true }
+
+    signingConfigs {
+        release {
+            // Uses keystore.properties if present, otherwise falls back to the debug key
+            // so the APK is installable for internal distribution.
+            def ksFile = rootProject.file('keystore.properties')
+            if (ksFile.exists()) {
+                def p = new Properties(); ksFile.withInputStream { p.load(it) }
+                storeFile = rootProject.file(p['storeFile'])
+                storePassword = p['storePassword']
+                keyAlias = p['keyAlias']
+                keyPassword = p['keyPassword']
+            } else {
+                def dbg = signingConfigs.getByName('debug')
+                storeFile = dbg.storeFile
+                storePassword = dbg.storePassword
+                keyAlias = dbg.keyAlias
+                keyPassword = dbg.keyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled = false
+            signingConfig = signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+}
+
+kotlin {
+    jvmToolchain(17)
+}
+
+dependencies {
+    implementation 'androidx.core:core-ktx:1.16.0'
+}

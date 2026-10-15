@@ -77,12 +77,14 @@ func (s *Server) routes() http.Handler {
 	mux.Handle("GET /api/employer/{company}/devices", s.employer(s.handleDevices))
 	mux.Handle("POST /api/employer/{company}/devices", s.can(actAdd, "add devices", s.handleCreateDevice))
 	mux.Handle("DELETE /api/employer/{company}/devices/{id}", s.can(actDelete, "remove devices", s.handleRevokeDevice))
+	mux.Handle("POST /api/employer/{company}/devices/{id}/rotate", s.can(actAdd, "add devices", s.handleRotateDevice))
 	mux.Handle("GET /api/employer/{company}/time-entries", s.employer(s.handleTimeEntries))
 	mux.Handle("GET /api/employer/{company}/timeline", s.employer(s.handleTimeline))
 	mux.Handle("GET /api/employer/{company}/screenshots", s.employer(s.handleScreenshots))
 	mux.Handle("DELETE /api/employer/{company}/screenshots/{id}", s.can(actDelete, "delete screenshots", s.handleDeleteScreenshot))
 	mux.Handle("GET /api/employer/{company}/overview", s.employer(s.handleOverview))
 	mux.Handle("GET /api/employer/{company}/members/{user}/day", s.employer(s.handleMemberDay))
+	mux.Handle("GET /api/employer/{company}/devices/{id}/day", s.employer(s.handleDeviceDay))
 	mux.Handle("GET /api/employer/{company}/monthly", s.employer(s.handleMonthly))
 	mux.Handle("GET /api/employer/{company}/monthly/members", s.employer(s.handleMonthlyMembers))
 	mux.Handle("POST /api/employer/{company}/members/{user}/manual", s.can(actAdd, "add manual time", s.handleAddManual))
@@ -312,6 +314,8 @@ func platformOf(name string) (platform, arch, version string) {
 	n := strings.ToLower(name)
 
 	switch {
+	case strings.HasSuffix(n, ".apk") || strings.HasSuffix(n, ".aab") || strings.Contains(n, "android"):
+		platform = "Android"
 	case strings.HasSuffix(n, ".dmg") || strings.Contains(n, "darwin") || strings.Contains(n, "macos") || strings.Contains(n, "-mac"):
 		platform = "macOS"
 	case strings.HasSuffix(n, ".exe") || strings.Contains(n, "windows") || strings.Contains(n, "win"):

@@ -70,3 +70,35 @@ WebSocket: `ws://HUB/ws?token=<hajir token>&company_id=<id>` → messages `{"eve
   `make package-macos HAJIR_API_URL=https://your-api/api/v2 HUB_URL=https://your-hub`
   Defaults are `http://localhost:8001/api/v2` and `http://localhost:4010`. The same env vars at runtime override them (handy for development).
 - The local server now listens on `127.0.0.1` only; the app API also rejects other hosts and requests without the `X-Hajir-Client` header.
+
+## Local Windows/Linux installers
+
+`release-server.sh` is for the hub server only. The Windows installer must be the
+NSIS setup wizard (same as `release.sh`), not the bare `package-windows-*`
+target. On a Mac with Docker Desktop running:
+
+```sh
+V=$(sed -n 's/.*AppVersion = "\(.*\)".*/\1/p' cloud/heartbeat.go)
+API=http://localhost:8001/api/v2; HUB=http://localhost:4010
+docker run --rm -v "$PWD":/src -w /src -e GOFLAGS=-buildvcs=false \
+  -e HAJIR_API_URL=$API -e HUB_URL=$HUB -e VERSION=$V golang:1.22-bookworm bash -c '
+    set -e
+    git config --global --add safe.directory /src
+    apt-get update -qq && apt-get install -y -qq nsis >/dev/null
+    make build-all
+    GOOS=windows GOARCH=arm64 go build -ldflags="-s -w -H windowsgui -X my-monitor/web.DefaultHajirAPIURL=$HAJIR_API_URL -X my-monitor/web.DefaultHubURL=$HUB_URL" -o dist/my-monitor-windows-arm64.exe .
+    make package-linux-amd64 package-linux-arm64
+    for arch in amd64 arm64; do
+      makensis -DVERSION=$VERSION -DSRCEXE=/src/dist/my-monitor-windows-$arch.exe \
+        -DOUTFILE=MyMonitor-Setup-windows-$arch-v$VERSION.exe installer-nsis/installer.nsi
+      # makensis writes OUTFILE next to the .nsi, not the working dir
+      mv -f installer-nsis/MyMonitor-Setup-windows-$arch-v$VERSION.exe dist/
+    done'
+D=hub-data/downloads
+cp -f dist/MyMonitor-Setup-windows-amd64-v$V.exe dist/MyMonitor-Setup-windows-arm64-v$V.exe "$D/"
+for a in linux-amd64 linux-arm64; do cp -f dist/MyMonitor-Setup-$a "$D/MyMonitor-Setup-$a-v$V"; done
+```
+
+Pick the right file on Windows: **x64** for Intel/AMD PCs (almost all), **ARM64**
+only for ARM laptops (Surface Pro X, Snapdragon). Running the ARM64 one on an
+Intel/AMD PC gives "This app can't run on your PC".

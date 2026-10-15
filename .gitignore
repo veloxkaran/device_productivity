@@ -28,3 +28,9 @@ my-monitor
 my-monitor.exe
 
 .env
+
+# stray sed/edit temp files
+sed??????
+sedMSpOWs
+*.sedbak
+go.mod.legacybak

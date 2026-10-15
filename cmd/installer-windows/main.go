@@ -137,8 +137,7 @@ func runInstall(token, hubURL string, silent bool) {
 		}
 		if portReady() {
 			ok(fmt.Sprintf("Running at http://localhost:%d", port))
-			exec.Command("cmd", "/c", "start",
-				fmt.Sprintf("http://localhost:%d/setup", port)).Start()
+			info("Open the tracker any time from the system-tray icon.")
 		} else {
 			warn("App started but port not yet open — may still be loading.")
 		}

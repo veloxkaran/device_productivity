@@ -451,6 +451,132 @@ func (s *Server) handleOverview(w http.ResponseWriter, r *http.Request, e *Emplo
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (s *Server) handleDeviceDay(w http.ResponseWriter, r *http.Request, e *Employer, companyID int64) {
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if id <= 0 {
+		writeErr(w, http.StatusUnprocessableEntity, "invalid device")
+		return
+	}
+	dev, err := s.store.DeviceByID(id)
+	if err != nil || dev == nil || dev.CompanyID != companyID {
+		writeErr(w, http.StatusNotFound, "device not found")
+		return
+	}
+	if !scopeOf(r).Allows(dev.UserID) {
+		writeErr(w, http.StatusForbidden, "you do not have access to this device")
+		return
+	}
+	start, end, err := s.dayBounds(r.URL.Query().Get("date"))
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	cfg := s.store.GetSettings(companyID)
+	now := time.Now()
+
+	// Time entries for this one device.
+	entries, _ := s.store.TimeEntries(companyID, dev.UserID, []int64{id}, start, end)
+	var worked time.Duration
+	var firstIn, lastOut *time.Time
+	open := false
+	for _, te := range entries {
+		if firstIn == nil || te.ClockIn.Before(*firstIn) {
+			t := te.ClockIn
+			firstIn = &t
+		}
+		from := maxTime(te.ClockIn, start)
+		to := now
+		if te.ClockOut != nil {
+			to = *te.ClockOut
+			if lastOut == nil || te.ClockOut.After(*lastOut) {
+				lastOut = te.ClockOut
+			}
+		} else {
+			open = true
+		}
+		to = minTime(to, end)
+		if to.After(from) {
+			worked += to.Sub(from)
+		}
+	}
+
+	// Activity samples → active/idle totals and per-hour breakdown.
+	samples, _ := s.store.Samples(companyID, 0, id, start, end)
+	var active, idle time.Duration
+	var hourlyActive, hourlyIdle [24]time.Duration
+	for i := 0; i+1 < len(samples); i++ {
+		gap := samples[i+1].CapturedAt.Sub(samples[i].CapturedAt)
+		if gap > maxSampleGap {
+			gap = maxSampleGap
+		}
+		h := samples[i].CapturedAt.In(s.cfg.Location).Hour()
+		if samples[i].IsActive {
+			active += gap
+			hourlyActive[h] += gap
+		} else {
+			idle += gap
+			hourlyIdle[h] += gap
+		}
+	}
+	hourly := make([]map[string]any, 24)
+	for h := 0; h < 24; h++ {
+		hourly[h] = map[string]any{"hour": h, "active_seconds": int64(hourlyActive[h].Seconds()), "idle_seconds": int64(hourlyIdle[h].Seconds())}
+	}
+
+	// Screenshots for this device, bucketed into 10-minute slots.
+	shots, _ := s.store.DeviceScreenshots(companyID, id, start, end)
+	bySlot := map[int][]map[string]any{}
+	minH, maxH := 24, -1
+	for h := 0; h < 24; h++ {
+		if hourlyActive[h]+hourlyIdle[h] > 0 {
+			minH, maxH = min(minH, h), max(maxH, h)
+		}
+	}
+	for _, sh := range shots {
+		local := sh.CapturedAt.In(s.cfg.Location)
+		slot := local.Hour()*6 + local.Minute()/10
+		shc := sh.CapturedAt
+		bySlot[slot] = append(bySlot[slot], map[string]any{"id": sh.ID, "captured_at": isoPtr(&shc), "url": s.screenshotURL(sh.ID)})
+		minH, maxH = min(minH, local.Hour()), max(maxH, local.Hour())
+	}
+	slots := []map[string]any{}
+	if maxH >= 0 {
+		for slot := minH * 6; slot < (maxH+1)*6; slot++ {
+			from := start.Add(time.Duration(slot*10) * time.Minute)
+			if from.After(now) {
+				break
+			}
+			to := from.Add(10*time.Minute - time.Second)
+			list := bySlot[slot]
+			if list == nil {
+				list = []map[string]any{}
+			}
+			slots = append(slots, map[string]any{"start": isoPtr(&from), "end": isoPtr(&to), "screenshots": list})
+		}
+	}
+
+	day := s.dayKey(start)
+	isToday := day == s.dayKey(now)
+	online := isToday && s.isOnline(dev)
+	status := "offline"
+	if online {
+		status = dev.LastStatus
+	}
+	var out any
+	if !open {
+		out = isoPtr(lastOut)
+	}
+	writeOK(w, "successfully fetched", map[string]any{
+		"user_id": dev.UserID, "device_id": dev.ID, "employee_name": dev.EmployeeName, "device_name": dev.Name, "platform": dev.Platform, "app_version": dev.AppVersion,
+		"date": day, "is_today": isToday, "online": online, "status": status, "is_clocked_in": open,
+		"present": firstIn != nil, "shift": shiftLabel(cfg), "late": firstIn != nil && firstIn.After(s.lateCutoff(cfg, start)),
+		"clock_in": isoPtr(firstIn), "clock_out": out,
+		"tracked_seconds": int64(worked.Seconds()), "worked_seconds": int64(worked.Seconds()), "active_seconds": int64(active.Seconds()), "idle_seconds": int64(idle.Seconds()),
+		"break_seconds": 0, "manual_seconds": 0, "manual_entries": []any{}, "idle_reports": []any{},
+		"hourly": hourly, "slots": slots, "screenshots_count": len(shots), "external": dev.UserID == 0,
+	})
+}
+
 func (s *Server) handleMemberDay(w http.ResponseWriter, r *http.Request, e *Employer, companyID int64) {
 	userID, _ := strconv.ParseInt(r.PathValue("user"), 10, 64)
 	if userID <= 0 {

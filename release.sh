@@ -37,14 +37,34 @@ echo "    HAJIR_API_URL=$HAJIR_API_URL"
 echo "    HUB_URL=$HUB_URL"
 
 echo "==> 1/4  Building installers + raw binaries (Docker)"
+# Windows installers are now the NSIS GUI wizard (not the old console self-installer,
+# which showed NO window under -H windowsgui and left users thinking nothing happened).
+# makensis + osslsigncode are installed in the container; signing is a no-op unless
+# WIN_SIGN_PFX is set (see sign-windows.sh / .env.production).
 docker run --rm -v "$PWD":/src -w /src \
   -e HAJIR_API_URL="$HAJIR_API_URL" -e HUB_URL="$HUB_URL" -e GOFLAGS=-buildvcs=false \
+  -e VERSION="$VERSION" \
+  -e WIN_SIGN_PFX="${WIN_SIGN_PFX:-}" -e WIN_SIGN_PASS="${WIN_SIGN_PASS:-}" -e WIN_SIGN_TS="${WIN_SIGN_TS:-}" \
   golang:1.22-bookworm bash -c '
     set -e
     git config --global --add safe.directory /src 2>/dev/null || true
-    make build-all
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update -qq && apt-get install -y -qq nsis osslsigncode >/dev/null
+    # Not build-all: the macOS targets need cgo + clang and are built natively
+    # below (build-dmg.sh), so the Linux container builds Windows + Linux only.
+    make build-windows-amd64 build-linux-amd64 build-linux-arm64
     GOOS=windows GOARCH=arm64 go build -ldflags="-s -w -H windowsgui -X my-monitor/web.DefaultHajirAPIURL=$HAJIR_API_URL -X my-monitor/web.DefaultHubURL=$HUB_URL" -o dist/my-monitor-windows-arm64.exe .
-    make package-linux-amd64 package-linux-arm64 package-windows-amd64 package-windows-arm64
+    make package-linux-amd64 package-linux-arm64
+    # NSIS GUI installers, versioned filename so the dashboard tags them correctly.
+    for arch in amd64 arm64; do
+      makensis -DVERSION="$VERSION" \
+        -DSRCEXE=/src/dist/my-monitor-windows-$arch.exe \
+        -DOUTFILE=MyMonitor-Setup-windows-$arch-v$VERSION.exe \
+        installer-nsis/installer.nsi
+      # makensis writes OUTFILE next to the .nsi, not the working dir
+      mv -f installer-nsis/MyMonitor-Setup-windows-$arch-v$VERSION.exe dist/
+      bash sign-windows.sh dist/MyMonitor-Setup-windows-$arch-v$VERSION.exe
+    done
   '
 
 if [ "$(uname -s)" = "Darwin" ]; then
@@ -65,8 +85,12 @@ if [ "${BUILD_LEGACY:-0}" = "1" ]; then
     golang:1.20-bullseye bash -c '
       set -e
       git config --global --add safe.directory /src 2>/dev/null || true
-      make GO_TAGS=legacyos \
-           build-mac-amd64 build-mac-arm64 \
+      # Go 1.20 rejects the go.mod "go 1.22" line: pin it for this build only.
+      cp go.mod go.mod.legacybak
+      trap "mv -f go.mod.legacybak go.mod" EXIT
+      # Not sed -i: it needs a temp file in /src, which the Docker Desktop mount refuses.
+      sed "s/^go 1\.22.*$/go 1.20/" go.mod.legacybak > go.mod
+      make SKIP_TIDY=1 GO_TAGS=legacyos \
            build-linux-amd64 build-linux-arm64 \
            build-windows-amd64 build-windows-386 \
            package-windows-amd64 package-windows-386 \
@@ -89,6 +113,9 @@ else
 fi
 
 echo "==> 2/4  Publishing installers + raw binaries to $DEST"
+# Remove stale UNVERSIONED Windows setups (older builds / hotfixes) so the
+# dashboard lists only the current versioned installer and "latest" is unambiguous.
+rm -f "$DEST"/MyMonitor-Setup-windows-amd64.exe "$DEST"/MyMonitor-Setup-windows-arm64.exe 2>/dev/null || true
 cp -f dist/MyMonitor-Setup-* "$DEST"/ 2>/dev/null || true
 cp -f dist/*.dmg "$DEST"/ 2>/dev/null || true
 cp -f dist/my-monitor-darwin-amd64 dist/my-monitor-darwin-arm64 \

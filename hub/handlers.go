@@ -287,6 +287,8 @@ func (s *Server) summary(d *Device, start, end time.Time) map[string]any {
 		"screenshots_count":    shots,
 		"last_screenshot_at":   isoPtr(lastShot),
 		"revoked":              d.RevokedAt != nil,
+		"external":             d.UserID == 0,
+		"token_rotated_at":     isoPtr(d.TokenRotatedAt),
 	}
 }
 
@@ -319,13 +321,23 @@ func (s *Server) handleCreateDevice(w http.ResponseWriter, r *http.Request, e *E
 		EmployeeName string `json:"employee_name"`
 		Name         string `json:"name"`
 	}
-	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&in); err != nil || in.UserID <= 0 {
-		writeErr(w, http.StatusUnprocessableEntity, "user_id is required")
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&in); err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, "invalid request")
 		return
 	}
-	// A department-scoped manager may add devices only for their own people.
-	if denyMember(w, r, in.UserID) {
-		return
+	if in.UserID > 0 {
+		// Existing employee: a department-scoped manager may add devices only for
+		// their own people.
+		if denyMember(w, r, in.UserID) {
+			return
+		}
+	} else {
+		// External person (not an employee): no user_id, just a name. Stored with
+		// user_id 0 so it shows as a standalone tracked device.
+		if strings.TrimSpace(in.EmployeeName) == "" {
+			writeErr(w, http.StatusUnprocessableEntity, "select an employee or enter a name")
+			return
+		}
 	}
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
@@ -338,6 +350,32 @@ func (s *Server) handleCreateDevice(w http.ResponseWriter, r *http.Request, e *E
 	}
 	s.publish(d, "created")
 	writeJSON(w, http.StatusCreated, map[string]any{"status": "success", "message": "device token created, it is shown only once", "data": map[string]any{
+		"device_id": d.ID, "device_name": d.Name, "user_id": d.UserID, "employee_name": d.EmployeeName, "token": token, "server_url": s.cfg.PublicURL,
+	}})
+}
+
+func (s *Server) handleRotateDevice(w http.ResponseWriter, r *http.Request, e *Employer, companyID int64) {
+	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if id <= 0 {
+		writeErr(w, http.StatusUnprocessableEntity, "invalid device id")
+		return
+	}
+	d0, err := s.store.DeviceByID(id)
+	if err != nil || d0 == nil || d0.CompanyID != companyID {
+		writeErr(w, http.StatusNotFound, "device not found")
+		return
+	}
+	// A department-scoped manager may rotate only their own people's devices.
+	if d0.UserID > 0 && denyMember(w, r, d0.UserID) {
+		return
+	}
+	d, token, err := s.store.RotateDeviceTokenByID(companyID, id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not regenerate token")
+		return
+	}
+	s.publish(d, "updated")
+	writeJSON(w, http.StatusCreated, map[string]any{"status": "success", "message": "device token regenerated, it is shown only once", "data": map[string]any{
 		"device_id": d.ID, "device_name": d.Name, "user_id": d.UserID, "employee_name": d.EmployeeName, "token": token, "server_url": s.cfg.PublicURL,
 	}})
 }

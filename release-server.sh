@@ -7,6 +7,15 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Server-only: it rewrites .env.production and restarts the live hub, and uses
+# GNU sed / sha256sum. On a Mac, build locally with the commands in HUB.md
+# ("Local Windows/Linux installers") instead.
+if [ "$(uname -s)" = "Darwin" ]; then
+  echo "release-server.sh runs on the hub server (Linux), not on macOS." >&2
+  echo "For local installers see HUB.md -> Local Windows/Linux installers." >&2
+  exit 1
+fi
+
 HUB_URL="https://monitor.veloxlabs.net"
 API_URL="https://dev.veloxlabs.net/api/v2"
 V="$(sed -n 's/.*AppVersion = "\(.*\)".*/\1/p' cloud/heartbeat.go)"
