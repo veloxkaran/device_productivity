@@ -86,8 +86,9 @@ class ScreenActivityService : Service() {
     private var reader: ImageReader? = null
     private val frameLock = Any()
     private var lastFrame: Bitmap? = null
+    @Volatile private var lastFrameAt = 0L
 
-    @Volatile private var intervalSec = 600
+    @Volatile private var intervalSec = 180
     @Volatile private var quality = 60
     @Volatile private var maxWidth = 1080
     @Volatile private var trackingEnabled = true
@@ -216,28 +217,20 @@ class ScreenActivityService : Service() {
         val w = (m.widthPixels * scale).toInt().coerceAtLeast(1)
         val h = (m.heightPixels * scale).toInt().coerceAtLeast(1)
         reader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2).apply {
+            // Always keep the most recent frame as a Bitmap. A mirror display only
+            // emits a frame when the screen changes, so on a static screen there is
+            // no new frame at capture time — holding the latest one guarantees every
+            // interval still has something current to encode. Throttled to once a
+            // second to limit CPU/GC on busy screens.
             setOnImageAvailableListener({ rd ->
                 val img = try { rd.acquireLatestImage() } catch (_: Exception) { null } ?: return@setOnImageAvailableListener
-                // The virtual display fires on every frame; converting each one to a
-                // Bitmap would churn CPU/GC for a screenshot taken only once per
-                // interval. Keep a frame only when one is needed soon (or none yet),
-                // otherwise just drain to keep the reader flowing.
-                val need = synchronized(frameLock) { lastFrame == null } ||
-                    SystemClock.elapsedRealtime() >= nextShotAt - 6_000
-                if (!need) { img.close(); return@setOnImageAvailableListener }
                 try {
-                    val plane = img.planes[0]
-                    val stride = plane.pixelStride
-                    val rowPad = plane.rowStride - stride * img.width
-                    val padded = Bitmap.createBitmap(img.width + rowPad / stride, img.height, Bitmap.Config.ARGB_8888)
-                    padded.copyPixelsFromBuffer(plane.buffer)
-                    val frame = if (rowPad == 0) padded else {
-                        val cropped = Bitmap.createBitmap(padded, 0, 0, img.width, img.height)
-                        padded.recycle(); cropped
-                    }
+                    val nowMs = SystemClock.elapsedRealtime()
+                    val have = synchronized(frameLock) { lastFrame != null }
+                    if (have && nowMs - lastFrameAt < 1000) return@setOnImageAvailableListener
+                    val frame = imageToBitmap(img) ?: return@setOnImageAvailableListener
                     synchronized(frameLock) { lastFrame?.recycle(); lastFrame = frame }
-                } catch (e: Exception) {
-                    Log.w(TAG, "frame decode failed: ${'$'}{e.message}")
+                    lastFrameAt = nowMs
                 } finally { img.close() }
             }, handler)
         }
@@ -259,10 +252,37 @@ class ScreenActivityService : Service() {
         }
     }
 
+    /** Convert an acquired RGBA_8888 Image to a tightly-cropped Bitmap. */
+    private fun imageToBitmap(img: android.media.Image): Bitmap? = try {
+        val plane = img.planes[0]
+        val stride = plane.pixelStride
+        val rowPad = plane.rowStride - stride * img.width
+        val padded = Bitmap.createBitmap(img.width + rowPad / stride, img.height, Bitmap.Config.ARGB_8888)
+        padded.copyPixelsFromBuffer(plane.buffer)
+        if (rowPad == 0) padded else {
+            val cropped = Bitmap.createBitmap(padded, 0, 0, img.width, img.height)
+            padded.recycle(); cropped
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "frame decode failed: ${'$'}{e.message}"); null
+    }
+
     private fun captureOnce() {
-        val src = synchronized(frameLock) { lastFrame }
+        var src = synchronized(frameLock) { lastFrame }
+        if (src == null || src.isRecycled) {
+            // No frame cached yet (e.g. first shot, or the screen never changed).
+            // Pull the latest frame directly as a fallback.
+            val img = try { reader?.acquireLatestImage() } catch (_: Exception) { null }
+            if (img != null) {
+                try {
+                    val b = imageToBitmap(img)
+                    if (b != null) { synchronized(frameLock) { lastFrame?.recycle(); lastFrame = b }; lastFrameAt = SystemClock.elapsedRealtime(); src = b }
+                } finally { img.close() }
+            }
+        }
         if (src == null || src.isRecycled) {
             lastError = "Waiting for first frame"
+            Log.w(TAG, "captureOnce: no frame available yet")
             return
         }
         try {
@@ -278,6 +298,7 @@ class ScreenActivityService : Service() {
             trimQueue()
             lastCaptureAt = at
             lastError = ""
+            Log.i(TAG, "screenshot captured (${out.size()} bytes), queued")
         } catch (e: Exception) {
             Log.e(TAG, "capture failed", e)
             lastError = "Capture failed: ${'$'}{e.message}".take(250)
