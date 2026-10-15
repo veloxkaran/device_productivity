@@ -10,7 +10,7 @@ MIN_MACOS ?= 10.15
         installer-windows-nsis installer-windows-arm64-nsis \
         installer-gui-windows-amd64 installer-gui-windows-arm64 \
         publish-local publish-staging publish-prod \
-        installer-gui-linux-amd64 installer-gui-linux-arm64 installer-gui-macos installer-gui-all \
+        installer-gui-linux-amd64 installer-gui-linux-arm64 installer-gui-macos installer-gui-macos-prod installer-gui-all \
         dist clean deps
 
 # ── Server URLs baked into the desktop app ─────────────────────────
@@ -382,6 +382,14 @@ installer-gui-macos: package-macos-universal
 	cd dist && zip -qr MyMonitor-GUI-Setup-macos.zip "Install Hajir Tracker.app" "Uninstall Hajir Tracker.app"
 	rm -rf dist/.gui-arm64 dist/.gui-amd64 dist/.gui-universal dist/.gui-un-arm64 dist/.gui-un-amd64 dist/.gui-un-universal "dist/Uninstall Hajir Tracker.app" cmd/installer-gui/app.zip
 	@echo "  Installer: dist/MyMonitor-GUI-Setup-macos.zip"
+
+# Convenience: macOS GUI installer baked with PRODUCTION URLs, so a plain
+# `make installer-gui-macos` (localhost defaults) can never ship a broken
+# production build again.
+installer-gui-macos-prod:
+	$(MAKE) installer-gui-macos HAJIR_API_URL=$(PROD_API) HUB_URL=$(PROD_HUB)
+	@echo "  → Built with api=$(PROD_API) hub=$(PROD_HUB)"
+	@echo "  Upload: scp dist/MyMonitor-GUI-Setup-macos.zip <server>:.../hub-data/downloads/MyMonitor-GUI-Setup-macos-v$(VERSION).zip"
 
 installer-gui-all: installer-gui-windows-amd64 installer-gui-windows-arm64 installer-gui-linux-amd64 installer-gui-linux-arm64
 	@echo ""; echo "GUI installers in dist/:"; ls -lh dist/MyMonitor-GUI-Setup-* 2>/dev/null || true
