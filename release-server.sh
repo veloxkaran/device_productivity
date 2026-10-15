@@ -22,7 +22,7 @@ if [ -z "$CTR" ]; then command -v podman >/dev/null 2>&1 && CTR=podman || CTR=do
 echo "==> Using container engine: $CTR"
 
 HUB_URL="https://monitor.veloxlabs.net"
-API_URL="https://dev.veloxlabs.net/api/v2"
+API_URL="https://backend.veloxlabs.net/api/v2"   # production backend (same as mobile PROD_API)
 V="$(sed -n 's/.*AppVersion = "\(.*\)".*/\1/p' cloud/heartbeat.go)"
 : "${V:?could not read AppVersion from cloud/heartbeat.go}"
 echo "==> Releasing version $V"
