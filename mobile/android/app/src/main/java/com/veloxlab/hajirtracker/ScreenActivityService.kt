@@ -84,6 +84,7 @@ class ScreenActivityService : Service() {
     private var projection: MediaProjection? = null
     private var virtualDisplay: VirtualDisplay? = null
     private var reader: ImageReader? = null
+    private var wakeLock: PowerManager.WakeLock? = null
     private val frameLock = Any()
     private var lastFrame: Bitmap? = null
     @Volatile private var lastFrameAt = 0L
@@ -160,14 +161,22 @@ class ScreenActivityService : Service() {
         // Android 14+: callback must be registered before createVirtualDisplay.
         mp.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
-                Log.i(TAG, "projection stopped by system/user")
-                handler.post { shutdown(userStopped = true) }
+                if (stopping) return // our own projection.stop() during shutdown
+                Log.w(TAG, "projection revoked by system; awaiting one-tap resume")
+                handler.post {
+                    try { virtualDisplay?.release() } catch (_: Exception) {}
+                    synchronized(frameLock) { lastFrame?.recycle(); lastFrame = null }
+                    try { reader?.close() } catch (_: Exception) {}
+                    virtualDisplay = null; reader = null; projection = null
+                    enterWaiting() // keep the service alive, show resume notification
+                }
             }
         }, handler)
         setupDisplay(mp)
 
         running = true
         lastError = ""
+        acquireWakeLock()
         clockInAt = System.currentTimeMillis()
         Agent.rollDay(this)
         prefs(this).edit().putLong("open_clock_in", clockInAt).putLong("session_start", clockInAt).apply()
@@ -245,8 +254,16 @@ class ScreenActivityService : Service() {
             if (!running) return
             val now = SystemClock.elapsedRealtime()
             if (now >= nextShotAt) {
-                if (trackingEnabled && !Agent.onBreak(this@ScreenActivityService) && isInteractive()) captureOnce()
-                nextShotAt = now + intervalSec * 1000L
+                if (!trackingEnabled || Agent.onBreak(this@ScreenActivityService)) {
+                    nextShotAt = now + intervalSec * 1000L
+                } else if (isInteractive()) {
+                    captureOnce()
+                    nextShotAt = now + intervalSec * 1000L
+                } else {
+                    // Screen off: nothing to capture. Re-check soon so a shot lands
+                    // right after the screen returns instead of waiting a full interval.
+                    nextShotAt = now + 5_000
+                }
             }
             handler.postDelayed(this, 5_000)
         }
@@ -308,6 +325,16 @@ class ScreenActivityService : Service() {
     private fun trimQueue() {
         val files = queueDir.listFiles()?.sortedBy { it.name } ?: return
         if (files.size > MAX_QUEUE) files.take(files.size - MAX_QUEUE).forEach { it.delete() }
+    }
+
+    private fun acquireWakeLock() {
+        try {
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock?.let { if (it.isHeld) it.release() }
+            wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "hajir:tracking").apply {
+                setReferenceCounted(false); acquire()
+            }
+        } catch (e: Exception) { Log.w(TAG, "wakelock: ${'$'}{e.message}") }
     }
 
     private fun isInteractive(): Boolean =
@@ -427,7 +454,8 @@ class ScreenActivityService : Service() {
         synchronized(frameLock) { lastFrame?.recycle(); lastFrame = null }
         try { reader?.close() } catch (_: Exception) {}
         try { projection?.stop() } catch (_: Exception) {}
-        virtualDisplay = null; reader = null; projection = null
+        try { wakeLock?.release() } catch (_: Exception) {}
+        virtualDisplay = null; reader = null; projection = null; wakeLock = null
         net.execute {
             Agent.endBreakIfAny(this)
             Agent.closeSession(this)

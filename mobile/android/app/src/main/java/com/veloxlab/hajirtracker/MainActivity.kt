@@ -9,6 +9,9 @@ import android.Manifest
 import android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED
 import android.graphics.Color
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
 import android.os.Build
 import android.os.Bundle
 import android.webkit.JavascriptInterface
@@ -72,8 +75,56 @@ class MainActivity : Activity() {
     private fun maybeAutoResume() {
         if (configured && !ScreenActivityService.isRunning() && !autoPrompted) {
             autoPrompted = true
+            requestIgnoreBatteryOptimizations()
+            openAutostartSettingsOnce()
             web.postDelayed({ requestCapture() }, 400)
         }
+    }
+
+    /** Ask the OS to exempt the app from Doze/battery optimisation so the
+     *  tracking service keeps running in the background. */
+    private fun requestIgnoreBatteryOptimizations() {
+        try {
+            val pm = getSystemService(POWER_SERVICE) as PowerManager
+            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                @SuppressLint("BatteryLife")
+                val i = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
+                startActivity(i)
+            }
+        } catch (_: Exception) {}
+    }
+
+    /** Opens the OEM "autostart"/background-start settings screen (MIUI, ColorOS,
+     *  Funtouch, EMUI, etc.) so the employee can allow the app to run in the
+     *  background. There is no silent API for this; we jump straight to the page.
+     *  Shown once per install. */
+    private fun openAutostartSettingsOnce() {
+        val prefs = ScreenActivityService.prefs(this)
+        if (prefs.getBoolean("autostart_prompted", false)) return
+        val candidates = listOf(
+            "com.miui.securitycenter" to "com.miui.permcenter.autostart.AutoStartManagementActivity",
+            "com.letv.android.letvsafe" to "com.letv.android.letvsafe.AutobootManageActivity",
+            "com.coloros.safecenter" to "com.coloros.safecenter.permission.startup.StartupAppListActivity",
+            "com.coloros.safecenter" to "com.coloros.safecenter.startupapp.StartupAppListActivity",
+            "com.oppo.safe" to "com.oppo.safe.permission.startup.StartupAppListActivity",
+            "com.vivo.permissionmanager" to "com.vivo.permissionmanager.activity.BgStartUpManagerActivity",
+            "com.iqoo.secure" to "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity",
+            "com.huawei.systemmanager" to "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity",
+            "com.huawei.systemmanager" to "com.huawei.systemmanager.optimize.process.ProtectActivity",
+            "com.samsung.android.lool" to "com.samsung.android.sm.ui.battery.BatteryActivity",
+        )
+        for ((pkg, cls) in candidates) {
+            try {
+                val i = Intent().setComponent(ComponentName(pkg, cls)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (packageManager.resolveActivity(i, 0) != null) {
+                    startActivity(i)
+                    prefs.edit().putBoolean("autostart_prompted", true).apply()
+                    toast("Allow My Monitor to autostart, then return to the app.")
+                    return
+                }
+            } catch (_: Exception) {}
+        }
+        prefs.edit().putBoolean("autostart_prompted", true).apply() // stock Android: nothing to open
     }
 
     /** Desktop app.html, forced to the token-only setup and automatic wording. */
@@ -121,7 +172,7 @@ class MainActivity : Activity() {
             val json = try { if (body.isBlank()) null else JSONObject(body) } catch (_: Exception) { null }
             return try {
                 val out = Agent.call(this@MainActivity, path, json)
-                if (path == "provision") runOnUiThread { requestCapture() } // configured → start at once
+                if (path == "provision") runOnUiThread { requestIgnoreBatteryOptimizations(); openAutostartSettingsOnce(); requestCapture() } // configured → start at once
                 JSONObject().put("status", 200).put("body", out.toString()).toString()
             } catch (e: Agent.ApiError) {
                 JSONObject().put("status", e.status).put("body", e.body.toString()).toString()
